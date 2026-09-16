@@ -48,19 +48,24 @@ jobs:
       - name: run-notify を実行（通常の差分通知）
         if: steps.mode.outputs.mode == 'run-notify'
         env:
-          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          # フィードを追加した場合はここに DISCORD_WEBHOOK_URL_<新ID> を1行追加してください。
+          # (feeds.json の webhook_env に書いた名前と、ここの env の名前を一致させる)
+          DISCORD_WEBHOOK_URL_DAITO: ${{ secrets.DISCORD_WEBHOOK_URL_DAITO }}
+          DISCORD_WEBHOOK_URL_SYSTEM: ${{ secrets.DISCORD_WEBHOOK_URL_SYSTEM }}
         run: python main.py
 
       - name: init-read を実行（初回全既読化・通知なし）
         if: steps.mode.outputs.mode == 'init-read'
         env:
-          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          DISCORD_WEBHOOK_URL_DAITO: ${{ secrets.DISCORD_WEBHOOK_URL_DAITO }}
+          DISCORD_WEBHOOK_URL_SYSTEM: ${{ secrets.DISCORD_WEBHOOK_URL_SYSTEM }}
         run: python init_read.py
 
       - name: test-notify を実行（先頭1件だけテスト通知）
         if: steps.mode.outputs.mode == 'test-notify'
         env:
-          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          DISCORD_WEBHOOK_URL_DAITO: ${{ secrets.DISCORD_WEBHOOK_URL_DAITO }}
+          DISCORD_WEBHOOK_URL_SYSTEM: ${{ secrets.DISCORD_WEBHOOK_URL_SYSTEM }}
         run: python test_notify.py
 
       - name: 状態ファイル(state/*.json)の変更を確認
