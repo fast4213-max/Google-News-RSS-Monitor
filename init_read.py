@@ -17,6 +17,7 @@ import json
 import os
 
 import logger
+import notifier
 import rss
 import state_manager
 
@@ -36,10 +37,12 @@ def main() -> None:
     for feed in feeds:
         feed_id = feed["id"]
         feed_url = feed["url"]
+        webhook_env = feed.get("webhook_env")
         try:
             articles = rss.fetch_articles(feed_url)
         except Exception as e:
-            logger.error(_CONTEXT, f"[{feed_id}] RSS取得失敗のためスキップ: {e}", exc=e)
+            msg = logger.error(_CONTEXT, f"[{feed_id}] RSS取得失敗のためスキップ: {e}", exc=e)
+            notifier.send_error(f"{_CONTEXT}:{feed_id}", msg, webhook_env=webhook_env)
             continue
 
         ids = {a.id for a in articles}
