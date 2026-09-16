@@ -34,12 +34,13 @@ def main() -> None:
         feed_id = feed["id"]
         feed_name = feed["name"]
         feed_url = feed["url"]
+        webhook_env = feed["webhook_env"]
 
         try:
             articles = rss.fetch_articles(feed_url)
         except Exception as e:
             msg = logger.error(_CONTEXT, f"[{feed_id}] RSS取得失敗: {e}", exc=e)
-            notifier.send_error(f"{_CONTEXT}:{feed_id}", msg)
+            notifier.send_error(f"{_CONTEXT}:{feed_id}", msg, webhook_env=webhook_env)
             continue
 
         if not articles:
@@ -48,10 +49,10 @@ def main() -> None:
 
         top = articles[0]
         try:
-            notifier.send_article(feed_name, f"[TEST] {top.title}", top.link)
+            notifier.send_article(webhook_env, feed_name, f"[TEST] {top.title}", top.link)
         except Exception as e:
             msg = logger.error(_CONTEXT, f"[{feed_id}] Discord送信失敗: {e}", exc=e)
-            notifier.send_error(f"{_CONTEXT}:{feed_id}", msg)
+            notifier.send_error(f"{_CONTEXT}:{feed_id}", msg, webhook_env=webhook_env)
 
     logger.info(_CONTEXT, "===== テスト通知 終了 =====")
 
