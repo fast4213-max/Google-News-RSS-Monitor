@@ -36,8 +36,10 @@ def load_feeds() -> list[dict]:
     if not isinstance(feeds, list) or not feeds:
         raise RuntimeError("feeds.json が空、または配列ではありません")
     for feed in feeds:
-        if "id" not in feed or "name" not in feed or "url" not in feed:
-            raise RuntimeError(f"feeds.json の要素に id/name/url が揃っていません: {feed}")
+        if "id" not in feed or "name" not in feed or "url" not in feed or "webhook_env" not in feed:
+            raise RuntimeError(
+                f"feeds.json の要素に id/name/url/webhook_env が揃っていません: {feed}"
+            )
     return feeds
 
 
@@ -45,6 +47,7 @@ def process_feed(feed: dict) -> None:
     feed_id = feed["id"]
     feed_name = feed["name"]
     feed_url = feed["url"]
+    webhook_env = feed["webhook_env"]
     ctx = f"feed:{feed_id}"
 
     # 1. RSS取得・パース
@@ -52,11 +55,11 @@ def process_feed(feed: dict) -> None:
         articles = rss.fetch_articles(feed_url)
     except (rss.RssFetchError, rss.RssParseError) as e:
         msg = logger.error(ctx, f"RSS取得/解析に失敗しました: {e}", exc=e)
-        notifier.send_error(ctx, msg)
+        notifier.send_error(ctx, msg, webhook_env=webhook_env)
         return
     except Exception as e:
         msg = logger.error(ctx, f"想定外のエラー(RSS処理): {e}", exc=e)
-        notifier.send_error(ctx, msg)
+        notifier.send_error(ctx, msg, webhook_env=webhook_env)
         return
 
     logger.info(ctx, f"RSS取得成功: {len(articles)}件")
@@ -86,12 +89,12 @@ def process_feed(feed: dict) -> None:
 
     logger.info(ctx, f"未読合計: {len(pending)}件 (うち持ち越し{len(queued)}件)")
 
-    # 4. Discord送信 (最大MAX_NOTIFY_PER_RUN件)
+    # 4. Discord送信 (最大MAX_NOTIFY_PER_RUN件、このフィード専用のWebhookへ)
     try:
-        sent = notifier.send_articles(feed_name, pending, MAX_NOTIFY_PER_RUN)
+        sent = notifier.send_articles(webhook_env, feed_name, pending, MAX_NOTIFY_PER_RUN)
     except Exception as e:
         msg = logger.error(ctx, f"Discord送信中にエラー: {e}", exc=e)
-        notifier.send_error(ctx, msg)
+        notifier.send_error(ctx, msg, webhook_env=webhook_env)
         # 送信に失敗した場合、状態は変更せず次回に持ち越す(pendingをそのままqueueに保存)
         state_manager.save_queue(feed_id, pending)
         return
