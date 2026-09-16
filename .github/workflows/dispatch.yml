@@ -1,0 +1,82 @@
+name: RSS Discord Notifier (external trigger only)
+
+# 重要: ここに `schedule:` は書かない。
+# 起動は必ず cron-job.org からの repository_dispatch (外部HTTPリクエスト) のみで行う。
+on:
+  repository_dispatch:
+    types: [run-notify, init-read, test-notify]
+  # 手動デバッグ用（cron-job.orgを介さずGitHubのUIから直接試したい時だけ使う。定期実行には使わない）
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "run-notify / init-read / test-notify のいずれか"
+        required: true
+        default: "run-notify"
+        type: choice
+        options:
+          - run-notify
+          - init-read
+          - test-notify
+
+permissions:
+  contents: write  # state/*.json を自動コミットするために必要
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: リポジトリを取得
+        uses: actions/checkout@v4
+
+      - name: Pythonをセットアップ
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 依存関係をインストール
+        run: pip install -r requirements.txt
+
+      - name: 実行モードを決定
+        id: mode
+        run: |
+          if [ "${{ github.event_name }}" = "repository_dispatch" ]; then
+            echo "mode=${{ github.event.action }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "mode=${{ github.event.inputs.mode }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: run-notify を実行（通常の差分通知）
+        if: steps.mode.outputs.mode == 'run-notify'
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: python main.py
+
+      - name: init-read を実行（初回全既読化・通知なし）
+        if: steps.mode.outputs.mode == 'init-read'
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: python init_read.py
+
+      - name: test-notify を実行（先頭1件だけテスト通知）
+        if: steps.mode.outputs.mode == 'test-notify'
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: python test_notify.py
+
+      - name: 状態ファイル(state/*.json)の変更を確認
+        id: diff
+        run: |
+          git config user.name "rss-notifier-bot"
+          git config user.email "actions@users.noreply.github.com"
+          if git diff --quiet -- state/; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: 状態ファイルをコミット&プッシュ
+        if: steps.diff.outputs.changed == 'true'
+        run: |
+          git add state/
+          git commit -m "chore: update state via ${{ steps.mode.outputs.mode }} [skip ci]"
+          git push
