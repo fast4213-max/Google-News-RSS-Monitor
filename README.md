@@ -1,4 +1,4 @@
-# 大東市 Googleニュース Discord通知Bot
+# Googleニュース Discord通知Bot
 
 Googleニュースの「大東市」検索RSSを1時間ごとにチェックし、新着記事をDiscordに通知します。
 
@@ -305,6 +305,9 @@ A. ほぼ確実に **ステップ5（Workflow permissionsをRead and writeにす
 
 **Q. 通知が来た記事数が10件より少ない/多い日がある**
 A. 仕様通りです。1回の実行につき最大10件までしか送信しません。未読が10件を超えていた場合、残りは `state/queue_<id>.json` に保存され、次回の実行で優先的に送信されます（消えることはありません）。
+
+**Q. Discord送信が `status=403 body=error code: 1010` で失敗する**
+A. これはDiscord側ではなく、その手前にいる **Cloudflareのbot判定** による拒否です。Pythonの `urllib` はデフォルトで `Python-urllib/3.12` のような機械的なUser-Agentを送るため、スクリプトからのアクセスとして弾かれることがあります。対処済み: `notifier.py` の `_post()` でブラウザ相当の `User-Agent` ヘッダーを明示的に付与しています（`rss.py` のRSS取得時と同じ値）。もし別環境でこのエラーが再発したら、`notifier.py` 冒頭の `USER_AGENT` を最新のブラウザUAに更新してみてください。
 
 **Q. GitHub Actionsのcronは本当に使ってない？**
 A. `.github/workflows/dispatch.yml` の `on:` セクションを見てください。`repository_dispatch` と手動デバッグ用の `workflow_dispatch` のみで、`schedule:` は記述していません。
