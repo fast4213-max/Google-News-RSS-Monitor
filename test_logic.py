@@ -104,10 +104,9 @@ def test_diff_and_queue_logic():
 
 def test_dedup_clustering():
     """
-    同じ出来事を複数社が別記事(別guid)で配信した場合に、
-    最初のウィンドウで最速2件だけ通知され、dedup_followup_minutes以内の追加分は
-    間引かれ、経過後は新しいウィンドウとしてまた最大2件通知されることを確認する。
-    タイトルへのラベル付与は行わない。
+    同じ出来事を複数社が別記事(別guid)で配信した場合に、最速3件はそのまま通知され、
+    4件目以降は「同じ配信元が前回より新しいpubDateで改めて報じた場合」だけ
+    続報として通知されることを確認する。初見の配信元は4件目以降だと通知されない。
     """
     feed_id = "test_dedup_logic"
     path = dedup._clusters_path(feed_id)
@@ -125,8 +124,6 @@ def test_dedup_clustering():
         "80歳男を殺人未遂容疑で逮捕 大阪・大東市 - Yahoo!ニュース",
         "大東市で桜まつり開催 来月10日から - 地元新聞",  # 無関係な別の話題
     ]
-    # 4件とも同じ回のRSS取得で一度に届いた想定(pubDateはバラバラだが、
-    # classify_articlesの呼び出しは1回=同じwall clock "now"で処理される)。
     articles = [
         {
             "id": f"id{i}",
@@ -140,57 +137,50 @@ def test_dedup_clustering():
     try:
         to_notify, skip_ids = dedup.classify_articles(feed_id, articles, now=base)
         notified_ids = {a["id"] for a in to_notify}
-        assert notified_ids == {"id0", "id1", "id3"}, f"通知される想定と違う: {notified_ids}"
-        assert skip_ids == {"id2"}, f"間引かれる想定と違う: {skip_ids}"
-        print("OK: test_dedup_clustering (同一話題の最速2件のみ通知、pubDateがバラバラでも同一実行内はまとめて間引かれる)")
+        assert notified_ids == {"id0", "id1", "id2", "id3"}, f"通知される想定と違う: {notified_ids}"
+        assert skip_ids == set(), f"間引かれる想定と違う: {skip_ids}"
+        print("OK: test_dedup_clustering (最速3件[id0,1,2]はそのまま通知、別話題[id3]も独立して通知)")
 
-        # 60分後(followup_minutes=90未満、かつ通常のcron実行間隔である1時間程度)は、
-        # 実際の記事pubDateに関わらずまだ間引かれること
-        # (これがdefaultを90分にしている理由: 1時間ごとの定期実行をまたいでも
-        # 毎回リセットされてしまわないようにするため)
-        too_soon = {
-            "id": "id_too_soon",
-            "title": titles[0],
-            "link": "https://example.com/too_soon",
-            "pub_date": (base + timedelta(minutes=60)).strftime("%a, %d %b %Y %H:%M:%S GMT"),
+        # 4件目: 最速3件に含まれない初見の配信元(C新聞) → 通知しない
+        unknown_source = {
+            "id": "id_unknown_source",
+            "title": "スーパーで女性刺され死亡 元夫を逮捕 大阪・大東市 - C新聞",
+            "link": "https://example.com/unknown_source",
+            "pub_date": (base + timedelta(minutes=30)).strftime("%a, %d %b %Y %H:%M:%S GMT"),
         }
-        to_notify_soon, skip_ids_soon = dedup.classify_articles(
-            feed_id, [too_soon], now=base + timedelta(minutes=60)
+        to_notify2, skip_ids2 = dedup.classify_articles(
+            feed_id, [unknown_source], now=base + timedelta(minutes=30)
         )
-        assert to_notify_soon == [] and skip_ids_soon == {"id_too_soon"}
-        print("OK: test_dedup_clustering (90分未満は1時間経ってもまだ間引かれる)")
+        assert to_notify2 == [] and skip_ids2 == {"id_unknown_source"}
+        print("OK: test_dedup_clustering (最速3件に無い初見の配信元は4件目以降だと通知しない)")
 
-        # 実行時刻(wall clock)で100分後(followup_minutes=90以上)は新しいウィンドウが開き、
-        # タイトルを書き換えずに再び最大2件まで通知されること
-        followups = [
-            {
-                "id": "id_followup_a",
-                "title": titles[0],
-                "link": "https://example.com/followup_a",
-                "pub_date": (base + timedelta(minutes=100)).strftime("%a, %d %b %Y %H:%M:%S GMT"),
-            },
-            {
-                "id": "id_followup_b",
-                "title": titles[1],
-                "link": "https://example.com/followup_b",
-                "pub_date": (base + timedelta(minutes=101)).strftime("%a, %d %b %Y %H:%M:%S GMT"),
-            },
-            {
-                "id": "id_followup_c",
-                "title": titles[2],
-                "link": "https://example.com/followup_c",
-                "pub_date": (base + timedelta(minutes=102)).strftime("%a, %d %b %Y %H:%M:%S GMT"),
-            },
-        ]
-        to_notify_followup, skip_ids_followup = dedup.classify_articles(
-            feed_id, followups, now=base + timedelta(minutes=100)
+        # 5件目: 最速3件に含まれるMBSニュースが、前回(id0)より新しいpubDateで改めて報道
+        # → 続報として通知される(壁時計の待機時間は不要、pubDateが新しければ即通知)
+        mbs_followup = {
+            "id": "id_mbs_followup",
+            "title": "スーパーで女性死亡 殺人容疑に切り替え 元夫を再逮捕 大阪・大東市 - MBSニュース",
+            "link": "https://example.com/mbs_followup",
+            "pub_date": (base + timedelta(minutes=5)).strftime("%a, %d %b %Y %H:%M:%S GMT"),
+        }
+        to_notify3, skip_ids3 = dedup.classify_articles(
+            feed_id, [mbs_followup], now=base + timedelta(minutes=5)
         )
-        notified_followup_ids = {a["id"] for a in to_notify_followup}
-        assert notified_followup_ids == {"id_followup_a", "id_followup_b"}, notified_followup_ids
-        assert skip_ids_followup == {"id_followup_c"}
-        assert to_notify_followup[0]["title"] == titles[0]
-        assert to_notify_followup[1]["title"] == titles[1]
-        print("OK: test_dedup_clustering (90分経過後は新しいウィンドウでまた最大2件、ラベル無し)")
+        assert {a["id"] for a in to_notify3} == {"id_mbs_followup"}
+        assert skip_ids3 == set()
+        print("OK: test_dedup_clustering (最速3件に含まれる配信元の新しいpubDateでの続報は即通知)")
+
+        # 6件目: MBSニュースが同じか前回より古い/同時刻のpubDateで再度出現 → 続報とはみなさない
+        mbs_duplicate = {
+            "id": "id_mbs_duplicate",
+            "title": "スーパーで女性死亡 殺人容疑に切り替え 元夫を再逮捕 大阪・大東市 - MBSニュース",
+            "link": "https://example.com/mbs_duplicate",
+            "pub_date": (base + timedelta(minutes=5)).strftime("%a, %d %b %Y %H:%M:%S GMT"),
+        }
+        to_notify4, skip_ids4 = dedup.classify_articles(
+            feed_id, [mbs_duplicate], now=base + timedelta(minutes=5)
+        )
+        assert to_notify4 == [] and skip_ids4 == {"id_mbs_duplicate"}
+        print("OK: test_dedup_clustering (同じ配信元でもpubDateが前回以下なら続報とみなさない)")
     finally:
         if os.path.exists(path):
             os.remove(path)
