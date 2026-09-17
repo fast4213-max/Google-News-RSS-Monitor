@@ -36,10 +36,9 @@ DEFAULT_STALE_ARTICLE_DAYS = 3   # 記事の公開日がこれより古ければ
 # (例: 話題が広く更新の速い「中東情勢」だけ上限を増やす、期間を短くする、など)
 
 # 同一話題(複数社が同じ出来事を別記事で配信したもの)をまとめるクラスタリングのデフォルト値。
-# いずれも feeds.json 側で "dedup_first_n" / "dedup_followup_minutes" /
-# "dedup_similarity_threshold" を指定すればフィードごとに上書きできる。
+# いずれも feeds.json 側で "dedup_first_n" / "dedup_similarity_threshold" を
+# 指定すればフィードごとに上書きできる。
 DEFAULT_DEDUP_FIRST_N = dedup.DEFAULT_FIRST_N
-DEFAULT_DEDUP_FOLLOWUP_MINUTES = dedup.DEFAULT_FOLLOWUP_MINUTES
 DEFAULT_DEDUP_SIMILARITY_THRESHOLD = dedup.DEFAULT_SIMILARITY_THRESHOLD
 
 FEEDS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "feeds.json")
@@ -102,7 +101,6 @@ def process_feed(feed: dict) -> None:
     max_per_run = feed.get("max_per_run", DEFAULT_MAX_NOTIFY_PER_RUN)
     stale_days = feed.get("stale_days", DEFAULT_STALE_ARTICLE_DAYS)
     dedup_first_n = feed.get("dedup_first_n", DEFAULT_DEDUP_FIRST_N)
-    dedup_followup_minutes = feed.get("dedup_followup_minutes", DEFAULT_DEDUP_FOLLOWUP_MINUTES)
     dedup_similarity_threshold = feed.get(
         "dedup_similarity_threshold", DEFAULT_DEDUP_SIMILARITY_THRESHOLD
     )
@@ -147,8 +145,7 @@ def process_feed(feed: dict) -> None:
     unread_new = fresh_unread
 
     # 2.6 同一話題(複数社が同じ出来事を別記事で配信したもの)をクラスタリングし、
-    #     最速N件だけそのまま通知、以降は前回通知から一定時間経った「続報」のみ通知する。
-    #     間引かれた記事は「既読化のみ」で通知しない(通知が同じ話題で埋まるのを防ぐ)。
+    #     最速N件だけそのまま通知し、それ以降の同話題の記事は間引く(既読化のみで通知しない)。
     unread_new_dicts_raw = [
         {"id": a.id, "title": a.title, "link": a.link, "pub_date": a.pub_date}
         for a in unread_new
@@ -157,7 +154,6 @@ def process_feed(feed: dict) -> None:
         feed_id,
         unread_new_dicts_raw,
         first_n=dedup_first_n,
-        followup_minutes=dedup_followup_minutes,
         similarity_threshold=dedup_similarity_threshold,
     )
     if dedup_skip_ids:

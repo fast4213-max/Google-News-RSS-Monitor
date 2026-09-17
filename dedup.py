@@ -7,12 +7,11 @@ Discordに同じ話題の記事が延々と流れ続けるのを防ぐための�
   - Googleニュースの検索RSSは、同じ出来事について各社(産経/毎日/Yahoo!ニュース等)が
     それぞれ別記事(別guid)を出すため、そのまま通知すると同じ話題が何件も並んでしまう。
   - タイトルを正規化して類似度を比較し、「同じ話題」とみなせる記事をクラスタにまとめる。
-  - 1つの話題について、最初の dedup_first_n 件（デフォルト2件、= 速報を最速で伝える2社分）は
-    そのまま通知する。
-  - それ以降は、前回その話題を通知した記事の時刻から dedup_followup_minutes 分
-    （デフォルト60分）以上経っている場合のみ「続報」として通知する
-    （ノイズになる「数分〜数十分違いの同じ内容の記事」を間引く）。
-  - 60分経たないうちに来た同話題の記事は、既読化だけして通知しない（ノイズ削減の本体）。
+  - 1つの話題について、最初の dedup_first_n 件（デフォルト2件、= 速報を最速で伝える2社分）だけ
+    そのまま通知し、それ以降の同話題の記事は既読化のみで通知しない（ノイズ削減の本体）。
+    (Googleニュースは同じ出来事の記事を何時間も経ってから再インデックスすることがあり、
+    「一定時間経てば続報として再通知する」方式だと単なる古い重複記事まで拾ってしまうため、
+    時間による再通知は行わない設計にしている)
   - クラスタ情報は state/clusters_<feed_id>.json に永続化する。
     dedup_cluster_max_age_hours より古いクラスタは自然に破棄され、
     無関係な後日の記事が誤って同じクラスタに混ざるのを防ぐ。
@@ -30,14 +29,11 @@ from email.utils import parsedate_to_datetime
 
 STATE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "state")
 
-DEFAULT_FIRST_N = 2                  # そのまま通知する「最速N件」
-DEFAULT_FOLLOWUP_MINUTES = 60        # これ以上経っていれば「続報」として通知
+DEFAULT_FIRST_N = 2                  # そのまま通知する「最速N件」(これを超えた分は間引く)
 DEFAULT_SIMILARITY_THRESHOLD = 0.28  # タイトル類似度(bigram Dice係数)がこれ以上なら同じ話題とみなす
 DEFAULT_CLUSTER_MAX_AGE_HOURS = 72  # これより古いクラスタは破棄する
 MAX_TITLES_PER_CLUSTER = 5          # クラスタ内に保持する正規化タイトルの上限(メモリ節約)
 MAX_CLUSTERS_PER_FEED = 300         # フィードあたりのクラスタ保持上限(古い順に間引く)
-
-FOLLOWUP_LABEL = "続報: "  # 記号(【】)なしのシンプルな接頭辞
 
 _LEADING_TAG_RE = re.compile(r"^[\s]*[【\[（(][^】\]）)]{0,20}[】\]）)]\s*")
 _STRIP_CHARS_RE = re.compile(r"[\s　、。,.!?！？「」『』\"'\-ー・:：]")
@@ -123,7 +119,6 @@ def classify_articles(
     articles: list[dict],
     now: datetime | None = None,
     first_n: int = DEFAULT_FIRST_N,
-    followup_minutes: int = DEFAULT_FOLLOWUP_MINUTES,
     similarity_threshold: float = DEFAULT_SIMILARITY_THRESHOLD,
     cluster_max_age_hours: int = DEFAULT_CLUSTER_MAX_AGE_HOURS,
 ) -> tuple[list[dict], set[str]]:
@@ -132,8 +127,8 @@ def classify_articles(
 
     articles: [{"id", "title", "link", "pub_date"}, ...] 古い順
     戻り値: (to_notify, skip_ids)
-      to_notify: 通知する記事のリスト(古い順、タイトルは続報の場合「続報: 」が付与される)
-      skip_ids : 通知せず既読化だけする記事IDの集合(同話題の30分以内の重複)
+      to_notify: 通知する記事のリスト(古い順、first_n件を超えた分は含まれない)
+      skip_ids : 通知せず既読化だけする記事IDの集合(同話題でfirst_n件を超えた分)
 
     クラスタ状態は state/clusters_<feed_id>.json に保存される。
     """
@@ -153,7 +148,6 @@ def classify_articles(
 
     for a in articles:
         norm = normalize_title(a["title"])
-        event_time = _effective_time(a.get("pub_date", ""), now)
 
         best_cluster = None
         best_ratio = 0.0
@@ -164,20 +158,12 @@ def classify_articles(
                 best_cluster = c
 
         if best_cluster is not None and best_ratio >= similarity_threshold:
-            elapsed = event_time - _effective_time(best_cluster["last_event_time"], now)
-            if best_cluster["notified_count"] < first_n:
-                to_notify.append(dict(a))
-                best_cluster["notified_count"] += 1
-                best_cluster["last_event_time"] = a.get("pub_date", "") or now.isoformat()
-            elif elapsed >= timedelta(minutes=followup_minutes):
-                labeled = dict(a)
-                labeled["title"] = f"{FOLLOWUP_LABEL}{a['title']}"
-                to_notify.append(labeled)
-                best_cluster["notified_count"] += 1
-                best_cluster["last_event_time"] = a.get("pub_date", "") or now.isoformat()
-            else:
+            if best_cluster["notified_count"] >= first_n:
                 skip_ids.add(a["id"])
                 continue
+            to_notify.append(dict(a))
+            best_cluster["notified_count"] += 1
+            best_cluster["last_event_time"] = a.get("pub_date", "") or now.isoformat()
             best_cluster["titles"].append(norm)
             best_cluster["titles"] = best_cluster["titles"][-MAX_TITLES_PER_CLUSTER:]
         else:
