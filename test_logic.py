@@ -144,50 +144,53 @@ def test_dedup_clustering():
         assert skip_ids == {"id2"}, f"間引かれる想定と違う: {skip_ids}"
         print("OK: test_dedup_clustering (同一話題の最速2件のみ通知、pubDateがバラバラでも同一実行内はまとめて間引かれる)")
 
-        # 10分後(followup_minutes=30未満)は、実際の記事pubDateに関わらずまだ間引かれること
+        # 60分後(followup_minutes=90未満、かつ通常のcron実行間隔である1時間程度)は、
+        # 実際の記事pubDateに関わらずまだ間引かれること
+        # (これがdefaultを90分にしている理由: 1時間ごとの定期実行をまたいでも
+        # 毎回リセットされてしまわないようにするため)
         too_soon = {
             "id": "id_too_soon",
             "title": titles[0],
             "link": "https://example.com/too_soon",
-            "pub_date": (base + timedelta(minutes=10)).strftime("%a, %d %b %Y %H:%M:%S GMT"),
+            "pub_date": (base + timedelta(minutes=60)).strftime("%a, %d %b %Y %H:%M:%S GMT"),
         }
         to_notify_soon, skip_ids_soon = dedup.classify_articles(
-            feed_id, [too_soon], now=base + timedelta(minutes=10)
+            feed_id, [too_soon], now=base + timedelta(minutes=60)
         )
         assert to_notify_soon == [] and skip_ids_soon == {"id_too_soon"}
-        print("OK: test_dedup_clustering (30分未満はまだ間引かれる)")
+        print("OK: test_dedup_clustering (90分未満は1時間経ってもまだ間引かれる)")
 
-        # 実行時刻(wall clock)で40分後(followup_minutes=30以上)は新しいウィンドウが開き、
+        # 実行時刻(wall clock)で100分後(followup_minutes=90以上)は新しいウィンドウが開き、
         # タイトルを書き換えずに再び最大2件まで通知されること
         followups = [
             {
                 "id": "id_followup_a",
                 "title": titles[0],
                 "link": "https://example.com/followup_a",
-                "pub_date": (base + timedelta(minutes=40)).strftime("%a, %d %b %Y %H:%M:%S GMT"),
+                "pub_date": (base + timedelta(minutes=100)).strftime("%a, %d %b %Y %H:%M:%S GMT"),
             },
             {
                 "id": "id_followup_b",
                 "title": titles[1],
                 "link": "https://example.com/followup_b",
-                "pub_date": (base + timedelta(minutes=41)).strftime("%a, %d %b %Y %H:%M:%S GMT"),
+                "pub_date": (base + timedelta(minutes=101)).strftime("%a, %d %b %Y %H:%M:%S GMT"),
             },
             {
                 "id": "id_followup_c",
                 "title": titles[2],
                 "link": "https://example.com/followup_c",
-                "pub_date": (base + timedelta(minutes=42)).strftime("%a, %d %b %Y %H:%M:%S GMT"),
+                "pub_date": (base + timedelta(minutes=102)).strftime("%a, %d %b %Y %H:%M:%S GMT"),
             },
         ]
         to_notify_followup, skip_ids_followup = dedup.classify_articles(
-            feed_id, followups, now=base + timedelta(minutes=40)
+            feed_id, followups, now=base + timedelta(minutes=100)
         )
         notified_followup_ids = {a["id"] for a in to_notify_followup}
         assert notified_followup_ids == {"id_followup_a", "id_followup_b"}, notified_followup_ids
         assert skip_ids_followup == {"id_followup_c"}
         assert to_notify_followup[0]["title"] == titles[0]
         assert to_notify_followup[1]["title"] == titles[1]
-        print("OK: test_dedup_clustering (30分経過後は新しいウィンドウでまた最大2件、ラベル無し)")
+        print("OK: test_dedup_clustering (90分経過後は新しいウィンドウでまた最大2件、ラベル無し)")
     finally:
         if os.path.exists(path):
             os.remove(path)

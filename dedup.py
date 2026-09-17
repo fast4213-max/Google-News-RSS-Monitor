@@ -10,11 +10,16 @@ Discordに同じ話題の記事が延々と流れ続けるのを防ぐための�
   - 1つの話題について、**「直近 dedup_followup_minutes 分の間」に通知できるのは
     最大 dedup_first_n 件まで**というスライディングウィンドウ方式で間引く。
       - 最初の1件目・2件目(first_n=2)はそのまま通知する。
-      - その後 dedup_followup_minutes 分（デフォルト30分）以内に来た同話題の記事は
+      - その後 dedup_followup_minutes 分（デフォルト90分）以内に来た同話題の記事は
         既読化だけして通知しない（ここがノイズ削減の本体）。
       - dedup_followup_minutes 分、通知が無いまま経過すると「新しい枠」が開き、
         再びそこから first_n 件まで通知できるようになる（速報→続報→続報…と、
         本当に展開のある事件は各段階で最大2件ずつ拾える）。
+        定期実行の間隔(cron-job.orgからの起動、通常1時間ごと)より
+        dedup_followup_minutes を長くしておくことで、「実行するたびに毎回
+        必ず新しい枠が開いてしまい、大きな事件が何時間もポツポツ流れ続ける」
+        現象を防いでいる(90分なら、少なくとも1回は実行をまたいでも
+        リセットされない)。
     タイトルへのラベル付与は行わない(記事自身のタイトルにすでに【続報】等が
     付いていればそのまま表示され、こちら側で追加の接頭辞は付けない)。
   - 経過時間の判定は記事自身のpubDateではなく、必ず「このプログラムが実際に処理した時刻
@@ -41,7 +46,7 @@ from datetime import datetime, timedelta, timezone
 STATE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "state")
 
 DEFAULT_FIRST_N = 2                  # 各ウィンドウでそのまま通知する最大件数
-DEFAULT_FOLLOWUP_MINUTES = 30        # 通知が途絶えてからこれ以上経つと新しいウィンドウが開く
+DEFAULT_FOLLOWUP_MINUTES = 90        # 通知が途絶えてからこれ以上経つと新しいウィンドウが開く
 DEFAULT_SIMILARITY_THRESHOLD = 0.28  # タイトル類似度(bigram Dice係数)がこれ以上なら同じ話題とみなす
 DEFAULT_CLUSTER_MAX_AGE_HOURS = 72  # これより古いクラスタは破棄する
 MAX_TITLES_PER_CLUSTER = 5          # クラスタ内に保持する正規化タイトルの上限(メモリ節約)
