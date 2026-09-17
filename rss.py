@@ -14,6 +14,9 @@ import urllib.request
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 
+import logger
+
+_CONTEXT = "rss"
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
@@ -73,29 +76,35 @@ def parse_items(raw_xml: bytes, url: str) -> list[Article]:
         return []
 
     articles: list[Article] = []
-    for idx, item in enumerate(items):
+    broken = 0
+    for item in items:
         title_el = item.find("title")
         link_el = item.find("link")
         guid_el = item.find("guid")
         pubdate_el = item.find("pubDate")
 
-        if title_el is None or link_el is None:
-            # title/link が無いitemは構造異常とみなす
-            raise RssParseError(
-                f"item[{idx}] に title または link がありません（RSS構造が変わった可能性）url={url}"
-            )
-
-        title = (title_el.text or "").strip()
-        link = (link_el.text or "").strip()
+        title = (title_el.text or "").strip() if title_el is not None and title_el.text else ""
+        link = (link_el.text or "").strip() if link_el is not None and link_el.text else ""
         guid = (guid_el.text or "").strip() if guid_el is not None and guid_el.text else link
         pub_date = (pubdate_el.text or "").strip() if pubdate_el is not None and pubdate_el.text else ""
 
         if not title or not link:
-            raise RssParseError(
-                f"item[{idx}] の title または link が空です（RSS構造が変わった可能性）url={url}"
-            )
+            # title/link が欠けているitemは1件だけスキップする。
+            # ここで例外にすると「1件壊れているだけでそのフィード全体が処理されず、
+            # 未読が溜まって次回以降に大量通知される」ことになるため、
+            # 全件壊れている場合(=RSSの構造自体が変わった可能性)のみエラーにする。
+            broken += 1
+            continue
 
         articles.append(Article(id=guid, title=title, link=link, pub_date=pub_date))
+
+    if broken and not articles:
+        raise RssParseError(
+            f"全{len(items)}件の item に title または link がありません"
+            f"（RSS構造が変わった可能性）url={url}"
+        )
+    if broken:
+        logger.warn(_CONTEXT, f"title/linkが欠けている item を{broken}件スキップしました url={url}")
 
     return articles
 

@@ -29,6 +29,13 @@ Discordに同じ話題の記事が延々と流れ続けるのを防ぐための�
     続報として通知してしまうバグがあった。wall clock基準にすることで、同じ実行内で
     処理された記事は(pubDateがバラバラでも)確実にまとめて間引かれ、次の定期実行
     (≒1時間後)になって初めて新しい枠として通知される。
+  - 「古い記事(old_ids)」の扱い:
+    配信から fresh_hours 時間以上経った記事は、Googleニュースが後から
+    掘り起こしてきただけのことが多いが、一律に捨てると「まだ一度も通知して
+    いない話題」まで取りこぼしてしまう。そこで
+      - すでに通知済みの話題(既存クラスタ)にマッチする古い記事 → 捨てる(後追い報道)
+      - どのクラスタにもマッチしない古い記事(=初めての話題) → 1件だけ通知する
+    という扱いにしている。
   - クラスタ情報は state/clusters_<feed_id>.json に永続化する。
     dedup_cluster_max_age_hours より古いクラスタは自然に破棄され、
     無関係な後日の記事が誤って同じクラスタに混ざるのを防ぐ。
@@ -61,14 +68,43 @@ def _clusters_path(feed_id: str) -> str:
 
 
 def load_clusters(feed_id: str) -> list[dict]:
+    """
+    クラスタ状態を読み込む。
+
+    形式が想定と違う要素(旧形式や手で壊してしまったデータ)は、
+    落とすのではなく「使える形に整える」か、整えられなければ捨てる。
+    state ファイルの不備で本番処理全体がクラッシュするのを防ぐため
+    (実際に、フィールド名を変更した際に旧形式のデータでKeyErrorになり、
+    run-notify が数時間落ち続けた事故があった)。
+    """
     path = _clusters_path(feed_id)
     if not os.path.exists(path):
         return []
-    with open(path, "r", encoding="utf-8") as f:
-        content = f.read().strip()
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            content = f.read().strip()
         if not content:
             return []
-        return json.loads(content).get("clusters", [])
+        raw_clusters = json.loads(content).get("clusters", [])
+    except (OSError, ValueError):
+        return []
+
+    clusters = []
+    for c in raw_clusters:
+        if not isinstance(c, dict):
+            continue
+        titles = [t for t in c.get("titles", []) if isinstance(t, str) and t]
+        if not titles:
+            continue
+        notified_count = c.get("notified_count")
+        clusters.append(
+            {
+                "titles": titles[-MAX_TITLES_PER_CLUSTER:],
+                "notified_count": notified_count if isinstance(notified_count, int) else 0,
+                "last_notified_at": c.get("last_notified_at") or "",
+            }
+        )
+    return clusters
 
 
 def save_clusters(feed_id: str, clusters: list[dict]) -> None:
@@ -132,9 +168,13 @@ def _parse_iso(value: str) -> datetime:
     """
     if value:
         try:
-            return datetime.fromisoformat(value)
-        except ValueError:
-            pass
+            parsed = datetime.fromisoformat(value)
+        except (TypeError, ValueError):
+            return _EPOCH
+        # タイムゾーンが無い値が紛れ込んでいても now との引き算で落ちないようにする
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed
     return _EPOCH
 
 
@@ -146,18 +186,26 @@ def classify_articles(
     followup_minutes: int = DEFAULT_FOLLOWUP_MINUTES,
     similarity_threshold: float = DEFAULT_SIMILARITY_THRESHOLD,
     cluster_max_age_hours: int = DEFAULT_CLUSTER_MAX_AGE_HOURS,
+    old_ids: set[str] | None = None,
 ) -> tuple[list[dict], set[str]]:
     """
     未通知記事(古い順)を「同じ話題」でクラスタリングし、通知すべきものだけを返す。
 
     articles: [{"id", "title", "link", "pub_date"}, ...] 古い順
+    old_ids : 「配信から時間が経っている記事」のID集合(main.py の fresh_hours 判定結果)
     戻り値: (to_notify, skip_ids)
       to_notify: 通知する記事のリスト(古い順、タイトルは一切書き換えない)
       skip_ids : 通知せず既読化だけする記事IDの集合
 
-    「直近 followup_minutes 分の間に通知できるのは最大 first_n 件まで」という
-    スライディングウィンドウ方式。followup_minutes 分、通知が無いまま経過すると
-    枠がリセットされ、再び first_n 件まで通知できるようになる。
+    通知するかどうかの判定:
+      - 既存クラスタにマッチした(=すでに通知済みの話題)
+          - old_ids に入っている(古い記事) → 通知しない(後追い報道とみなす)
+          - そうでなければ「直近 followup_minutes 分の間に通知できるのは
+            最大 first_n 件まで」というスライディングウィンドウ方式。
+            followup_minutes 分、通知が無いまま経過すると枠がリセットされ、
+            再び first_n 件まで通知できるようになる。
+      - どのクラスタにもマッチしない(=初めての話題)
+          → 古い記事であっても通知する(見逃しを防ぐため)
 
     経過時間の判定は、記事自身のpubDateではなく必ず「このプログラムを実際に
     呼び出した時刻(now、通常は処理開始時のwall clock)」を基準にする。
@@ -166,6 +214,7 @@ def classify_articles(
 
     クラスタ状態は state/clusters_<feed_id>.json に保存される。
     """
+    old_ids = old_ids or set()
     now = now or datetime.now(timezone.utc)
     clusters = load_clusters(feed_id)
 
@@ -192,6 +241,10 @@ def classify_articles(
                 best_cluster = c
 
         if best_cluster is not None and best_ratio >= similarity_threshold:
+            # すでに通知済みの話題。配信から時間が経った記事は「後追い報道」なので捨てる
+            if a["id"] in old_ids:
+                skip_ids.add(a["id"])
+                continue
             elapsed = now - _parse_iso(best_cluster.get("last_notified_at", ""))
             if elapsed >= timedelta(minutes=followup_minutes):
                 # 通知が途絶えてから followup_minutes 分経過 → 新しい枠を開く

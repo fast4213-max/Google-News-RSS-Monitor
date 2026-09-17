@@ -196,6 +196,102 @@ def test_dedup_clustering():
             os.remove(path)
 
 
+def test_old_article_only_skipped_when_topic_already_notified():
+    """
+    公開から時間が経った記事(old_ids)の扱い:
+      - すでに通知済みの話題の後追い記事 → 通知しない
+      - まだ一度も通知していない話題 → 古くても通知する(見逃し防止)
+    """
+    feed_id = "test_old_article_logic"
+    path = dedup._clusters_path(feed_id)
+    if os.path.exists(path):
+        os.remove(path)
+
+    from datetime import datetime, timezone
+
+    now = datetime(2026, 9, 18, 5, 10, tzinfo=timezone.utc)
+
+    def article(article_id, title):
+        return {"id": article_id, "title": title, "link": f"https://example.com/{article_id}", "pub_date": ""}
+
+    try:
+        # 最初に「刺傷事件」の話題を通知させてクラスタを作る
+        dedup.classify_articles(
+            feed_id,
+            [article("seed", "スーパーで女性従業員刺される 80代男を現行犯逮捕 大阪・大東市 - A新聞")],
+            now=now,
+        )
+
+        # 同じ話題の「古い」後追い記事と、まったく別の話題の「古い」記事を同時に渡す
+        followup_old = article(
+            "old_followup", "スーパーで女性刺され死亡 殺人容疑で元夫を逮捕 大阪・大東市 - B新聞"
+        )
+        new_topic_old = article("old_new_topic", "大東市で新図書館がオープン 蔵書10万冊 - C新聞")
+        to_notify, skip_ids = dedup.classify_articles(
+            feed_id,
+            [followup_old, new_topic_old],
+            now=now,
+            old_ids={"old_followup", "old_new_topic"},
+        )
+
+        notified_ids = {a["id"] for a in to_notify}
+        assert notified_ids == {"old_new_topic"}, f"通知される想定と違う: {notified_ids}"
+        assert skip_ids == {"old_followup"}, f"間引かれる想定と違う: {skip_ids}"
+        print("OK: test_old_article (古い後追いは間引き、古くても初めての話題は通知)")
+    finally:
+        if os.path.exists(path):
+            os.remove(path)
+
+
+def test_read_ids_order_is_preserved():
+    """
+    既読IDが「古い順」で保存され、上限を超えたら本当に古い方から消えることを確認する。
+    (setのまま保存すると順序が毎回変わり、上限超過時にランダムなIDが消えて
+    その記事が未読に戻り再通知されるバグがあった)
+    """
+    import json
+
+    import state_manager
+
+    feed_id = "test_read_order"
+    path = state_manager._read_path(feed_id)
+    if os.path.exists(path):
+        os.remove(path)
+
+    original_max = state_manager.MAX_READ_IDS_PER_FEED
+    try:
+        state_manager.append_read_ids(feed_id, ["a", "b", "c"])
+        state_manager.append_read_ids(feed_id, ["c", "d"])  # 既存の"c"は重複させない
+        assert state_manager.load_read_id_list(feed_id) == ["a", "b", "c", "d"]
+        print("OK: test_read_ids_order (追記順=古い順が保たれる)")
+
+        # 上限を超えたら、古い方(先頭)から捨てられること
+        state_manager.MAX_READ_IDS_PER_FEED = 3
+        state_manager.append_read_ids(feed_id, ["e"])
+        assert state_manager.load_read_id_list(feed_id) == ["c", "d", "e"]
+        print("OK: test_read_ids_order (上限超過時は古い方から捨てられる)")
+
+        # ファイル上も順序が保たれていること(差分が毎回全行にならない)
+        with open(path, "r", encoding="utf-8") as f:
+            assert json.load(f)["ids"] == ["c", "d", "e"]
+    finally:
+        state_manager.MAX_READ_IDS_PER_FEED = original_max
+        if os.path.exists(path):
+            os.remove(path)
+
+
+def test_rss_skips_broken_item_but_keeps_rest():
+    """title/linkが欠けたitemが1件あっても、残りの記事は処理されること。"""
+    rss_with_one_broken = """<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"><channel>
+<item><title>正常な記事 - テスト新聞</title><link>https://example.com/ok</link></item>
+<item><title>リンクが無い記事</title></item>
+</channel></rss>"""
+    articles = rss.parse_items(rss_with_one_broken.encode("utf-8"), "test")
+    assert len(articles) == 1 and articles[0].title == "正常な記事 - テスト新聞"
+    print("OK: test_rss_skips_broken_item (1件壊れていても残りは処理される)")
+
+
 def test_fresh_hours_filter():
     """
     fresh_hours(時間単位フィルタ)が、stale_days(日単位)より厳しく効くことを確認する。
@@ -229,5 +325,8 @@ if __name__ == "__main__":
     test_parse_not_xml_raises()
     test_diff_and_queue_logic()
     test_dedup_clustering()
+    test_old_article_only_skipped_when_topic_already_notified()
+    test_read_ids_order_is_preserved()
+    test_rss_skips_broken_item_but_keeps_rest()
     test_fresh_hours_filter()
     print("\n全テスト成功")

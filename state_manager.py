@@ -9,12 +9,19 @@
 方針:
   - フィードごとにファイルを分割 → フィードが増えても1ファイルが肥大化しない。
   - read.json は「上限件数」を持たせて無限に増え続けないようにする(古いものから削除)。
-  - ここではファイルの読み書きのみを行い、実際の git commit は main.py 側 (git_sync.py) が担当する。
-    (このスクリプト自身はGitHub Actions上で実行され、リポジトリのファイルを直接書き換える)
+  - 既読IDは必ず「既読になった順(古い順)のリスト」として保存する。
+    set をそのまま json.dump すると並び順が実行のたびに変わってしまい、
+      (1) 中身が数件しか変わっていないのに state/*.json の差分が毎回全行になる
+      (2) 上限を超えたときに「古い順に間引く」つもりが実際にはランダムな
+          IDが捨てられ、捨てられた記事が「未読」に戻って再通知される
+    という問題が起きるため。追記は append_read_ids() を使う。
+  - ここではファイルの読み書きのみを行い、実際の git commit は
+    呼び出し元のGitHub Actionsワークフローが担当する。
 """
 
 import json
 import os
+from collections.abc import Iterable
 
 STATE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "state")
 MAX_READ_IDS_PER_FEED = 2000  # 既読リストの上限。超えたら古い方から間引く
@@ -45,15 +52,35 @@ def _save_json(path: str, data) -> None:
         f.write("\n")
 
 
-def load_read_ids(feed_id: str) -> set[str]:
-    """既読済み記事IDの集合を読み込む。"""
+def load_read_id_list(feed_id: str) -> list[str]:
+    """既読済み記事IDを「既読になった順(古い順)」のリストで読み込む。"""
     data = _load_json(_read_path(feed_id), {"ids": []})
-    return set(data.get("ids", []))
+    ids = data.get("ids", [])
+    return [i for i in ids if isinstance(i, str)]
 
 
-def save_read_ids(feed_id: str, ids: set[str]) -> None:
-    """既読済み記事IDを保存する。上限を超えた分は古い順(リストの先頭)から間引く。"""
-    id_list = list(ids)
+def load_read_ids(feed_id: str) -> set[str]:
+    """既読済み記事IDの集合を読み込む(「既読かどうか」の判定用)。"""
+    return set(load_read_id_list(feed_id))
+
+
+def append_read_ids(feed_id: str, new_ids: Iterable[str]) -> None:
+    """
+    既読済み記事IDを追記する。
+
+    既存の並び順(古い順)は保ったまま、まだ入っていないIDだけを末尾に足す。
+    上限(MAX_READ_IDS_PER_FEED)を超えた分は、本当に古い方(リストの先頭)から捨てる。
+
+    new_ids は「古い順に並んだ」リストを渡すこと(set を渡すと追記分の順序が
+    実行のたびに変わってしまうため)。
+    """
+    id_list = load_read_id_list(feed_id)
+    known = set(id_list)
+    for article_id in new_ids:
+        if article_id not in known:
+            id_list.append(article_id)
+            known.add(article_id)
+
     if len(id_list) > MAX_READ_IDS_PER_FEED:
         id_list = id_list[-MAX_READ_IDS_PER_FEED:]
     _save_json(_read_path(feed_id), {"ids": id_list})

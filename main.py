@@ -6,9 +6,11 @@
   1. feeds.json からRSS URLを読む(max_per_run / stale_days / fresh_hours が指定されていればそれを使う)
   2. RSSを取得・パース (rss.py)
   3. 前回までの既読ID (state/read_<id>.json) と比較し、未読記事を抽出
-  3.5 公開日が stale_days 日より古い記事、または fresh_hours 時間より古い記事は、
-      既読化のみして通知しない
-      (Googleニュースの検索結果に急に大昔/古めの記事が紛れ込むことがあるため)
+  3.5 公開日が stale_days 日より古い記事は、既読化のみして通知しない
+      (Googleニュースの検索結果に急に大昔の記事が紛れ込むことがあるため)
+  3.6 公開日が fresh_hours 時間より古い記事は「古い記事」として印を付け、
+      すでに通知済みの話題の後追い記事であれば通知しない。
+      まだ一度も通知していない話題であれば、古くても通知する(見逃し防止)
   4. 前回持ち越しのキュー (state/queue_<id>.json) を先頭に結合
   5. 先頭 max_per_run 件だけDiscordに通知
   6. 通知できた分だけ既読化。通知しきれなかった分はキューに保存(破棄しない)
@@ -33,7 +35,9 @@ import state_manager
 _CONTEXT = "main"
 DEFAULT_MAX_NOTIFY_PER_RUN = 10  # 1フィードあたり1回で通知する上限件数のデフォルト値
 DEFAULT_STALE_ARTICLE_DAYS = 3   # 記事の公開日がこれより古ければ「既読化のみ」で通知しないデフォルト値(日単位、大昔の記事対策)
-DEFAULT_FRESH_HOURS = 6          # 記事の公開日がこれより古ければ「既読化のみ」で通知しないデフォルト値(時間単位、同日でも古すぎる記事対策)
+DEFAULT_FRESH_HOURS = 3          # 記事の公開日がこれより古ければ「古い記事」として扱うデフォルト値(時間単位)
+                                 # 「古い記事」は、すでに通知済みの話題の後追いなら通知せず、
+                                 # 初めての話題なら(見逃し防止のため)通知する。詳細は dedup.classify_articles 参照
 # いずれも feeds.json 側で "max_per_run" / "stale_days" / "fresh_hours" を指定すればフィードごとに上書きできる
 # (例: 話題が広く更新の速い「中東情勢」だけ上限を増やす、期間を短くする、など)
 
@@ -57,13 +61,24 @@ def load_feeds() -> list[dict]:
             raise RuntimeError(
                 f"feeds.json の要素に id/name/url/webhook_env が揃っていません: {feed}"
             )
-        # max_per_run / stale_days / fresh_hours は任意項目。指定されている場合のみ型を確認する
-        # (指定しなければ DEFAULT_MAX_NOTIFY_PER_RUN / DEFAULT_STALE_ARTICLE_DAYS / DEFAULT_FRESH_HOURS が使われる)
-        for optional_key in ("max_per_run", "stale_days", "fresh_hours"):
+        # 以下は任意項目。指定されている場合のみ型を確認する
+        # (指定しなければこのファイル冒頭の DEFAULT_* が使われる)
+        for optional_key in (
+            "max_per_run",
+            "stale_days",
+            "fresh_hours",
+            "dedup_first_n",
+            "dedup_followup_minutes",
+        ):
             if optional_key in feed and not isinstance(feed[optional_key], int):
                 raise RuntimeError(
                     f"feeds.json の '{optional_key}' は整数で指定してください: {feed}"
                 )
+        threshold = feed.get("dedup_similarity_threshold")
+        if threshold is not None and not (isinstance(threshold, (int, float)) and 0 <= threshold <= 1):
+            raise RuntimeError(
+                f"feeds.json の 'dedup_similarity_threshold' は0〜1の数値で指定してください: {feed}"
+            )
     return feeds
 
 
@@ -149,48 +164,26 @@ def process_feed(feed: dict) -> None:
 
     # 2.5 公開日が stale_days 日より古い記事は「既読化のみ」で通知対象から外す
     #     (Googleニュースの検索結果に急に大昔の記事が紛れ込むことがあるため)
-    stale_ids = set()
-    fresh_unread = []
-    for a in unread_new:
-        if is_stale(a.pub_date, stale_days, ctx):
-            stale_ids.add(a.id)
-        else:
-            fresh_unread.append(a)
-
+    #     ※ 既読IDは「古い順に並んだリスト」で追記する(順序が崩れると上限超過時に
+    #        ランダムなIDが消えて再通知が起きるため。state_manager 参照)
+    stale_ids = [a.id for a in unread_new if is_stale(a.pub_date, stale_days, ctx)]
     if stale_ids:
-        read_ids = read_ids | stale_ids
-        state_manager.save_read_ids(feed_id, read_ids)
+        state_manager.append_read_ids(feed_id, stale_ids)
+        read_ids = read_ids | set(stale_ids)
         logger.info(
             ctx,
             f"公開日が{stale_days}日以上前の記事を{len(stale_ids)}件、"
             "通知せず既読化しました",
         )
-    unread_new = fresh_unread
+    unread_new = [a for a in unread_new if a.id not in read_ids]
 
-    # 2.5.5 公開日が fresh_hours 時間より古い記事も「既読化のみ」で通知対象から外す
-    #       (stale_daysより厳しい時間単位のフィルタ。「同日ではあるが配信から
-    #       何時間も経った記事」がGoogle側の都合で急に出てくるケースへの対策)
-    too_old_ids = set()
-    fresh_unread2 = []
-    for a in unread_new:
-        if is_too_old_for_fresh_notify(a.pub_date, fresh_hours, ctx):
-            too_old_ids.add(a.id)
-        else:
-            fresh_unread2.append(a)
-
-    if too_old_ids:
-        read_ids = read_ids | too_old_ids
-        state_manager.save_read_ids(feed_id, read_ids)
-        logger.info(
-            ctx,
-            f"公開日が{fresh_hours}時間以上前の記事を{len(too_old_ids)}件、"
-            "通知せず既読化しました",
-        )
-    unread_new = fresh_unread2
-
-    # 2.6 同一話題(複数社が同じ出来事を別記事で配信したもの)をクラスタリングし、
-    #     最速N件だけそのまま通知、以降はこのプログラムの実行時刻(wall clock)基準で
-    #     一定時間経った「続報」のみ通知する。それ以外は既読化のみで通知しない。
+    # 2.6 同一話題(複数社が同じ出来事を別記事で配信したもの)をクラスタリングして間引く。
+    #     - すでに通知済みの話題 … 直近 dedup_followup_minutes 分で最大 dedup_first_n 件まで。
+    #                              ただし公開から fresh_hours 時間以上経った記事(=後追い報道)は通知しない
+    #     - 初めての話題 … 公開から時間が経っていても通知する(見逃し防止)
+    old_ids = {
+        a.id for a in unread_new if is_too_old_for_fresh_notify(a.pub_date, fresh_hours, ctx)
+    }
     unread_new_dicts_raw = [
         {"id": a.id, "title": a.title, "link": a.link, "pub_date": a.pub_date}
         for a in unread_new
@@ -201,13 +194,18 @@ def process_feed(feed: dict) -> None:
         first_n=dedup_first_n,
         followup_minutes=dedup_followup_minutes,
         similarity_threshold=dedup_similarity_threshold,
+        old_ids=old_ids,
     )
     if dedup_skip_ids:
+        # 記事の並び(古い順)を保ったまま既読化する
+        skipped_in_order = [d["id"] for d in unread_new_dicts_raw if d["id"] in dedup_skip_ids]
+        state_manager.append_read_ids(feed_id, skipped_in_order)
         read_ids = read_ids | dedup_skip_ids
-        state_manager.save_read_ids(feed_id, read_ids)
+        old_skipped = len(dedup_skip_ids & old_ids)
         logger.info(
             ctx,
-            f"同一話題の重複記事を{len(dedup_skip_ids)}件、通知せず既読化しました",
+            f"同一話題の重複記事を{len(dedup_skip_ids)}件、通知せず既読化しました"
+            f"(うち公開から{fresh_hours}時間以上経った後追い記事{old_skipped}件)",
         )
 
     # 3. 前回持ち越しキューを先頭に結合 (古いものを優先して通知するため)
@@ -252,9 +250,8 @@ def process_feed(feed: dict) -> None:
         )
 
     # 5. 送信できた分だけ既読化し、残りはqueueに保存(破棄しない)
+    state_manager.append_read_ids(feed_id, [a["id"] for a in sent])
     sent_ids = {a["id"] for a in sent}
-    new_read_ids = read_ids | sent_ids
-    state_manager.save_read_ids(feed_id, new_read_ids)
 
     remaining = [p for p in pending if p["id"] not in sent_ids]
     state_manager.save_queue(feed_id, remaining)
@@ -275,7 +272,18 @@ def main() -> None:
         return
 
     for feed in feeds:
-        process_feed(feed)
+        # 1フィードの想定外エラーで全体を落とさない。
+        # ここで落ちるとスクリプトが異常終了し、GitHub Actions側の
+        # 「state/*.json をコミット&プッシュ」ステップがスキップされてしまう。
+        # その結果、処理済みの内容が記録されず、次回以降に未読が溜まり続けて
+        # 一気に大量通知される事故につながるため、必ず握りつぶしてログ+Discord通知に留める。
+        try:
+            process_feed(feed)
+        except Exception as e:
+            msg = logger.error(
+                _CONTEXT, f"フィード処理で想定外のエラー (id={feed.get('id')}): {e}", exc=e
+            )
+            notifier.send_error(f"feed:{feed.get('id')}", msg, webhook_env=feed.get("webhook_env"))
 
     logger.info(_CONTEXT, "===== 通常実行 終了 =====")
 

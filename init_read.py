@@ -45,15 +45,15 @@ def main() -> None:
             notifier.send_error(f"{_CONTEXT}:{feed_id}", msg, webhook_env=webhook_env)
             continue
 
-        ids = {a.id for a in articles}
-        # 既存の既読IDがあれば残しつつマージ(万一再実行しても安全なように)
-        existing = state_manager.load_read_ids(feed_id)
-        state_manager.save_read_ids(feed_id, existing | ids)
+        # 既存の既読IDは残したまま、今RSSに載っている分を追記する
+        # (万一再実行しても安全。RSSは新しい順なので、古い順になるよう反転して渡す)
+        ids = [a.id for a in reversed(articles)]
+        state_manager.append_read_ids(feed_id, ids)
 
         # 持ち越しキューが残っていた場合は初期化時にクリアする
         state_manager.save_queue(feed_id, [])
 
-        logger.info(_CONTEXT, f"[{feed_id}] {len(ids)}件を既読化しました")
+        logger.info(_CONTEXT, f"[{feed_id}] {len(set(ids))}件を既読化しました")
 
     logger.info(_CONTEXT, "===== 初回既読化 完了 =====")
 
