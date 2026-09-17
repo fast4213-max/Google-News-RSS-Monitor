@@ -4,12 +4,12 @@ name: RSS Discord Notifier (external trigger only)
 # 起動は必ず cron-job.org からの repository_dispatch (外部HTTPリクエスト) のみで行う。
 on:
   repository_dispatch:
-    types: [run-notify, init-read, test-notify]
+    types: [run-notify, init-read, test-notify, system-test]
   # 手動デバッグ用（cron-job.orgを介さずGitHubのUIから直接試したい時だけ使う。定期実行には使わない）
   workflow_dispatch:
     inputs:
       mode:
-        description: "run-notify / init-read / test-notify のいずれか"
+        description: "run-notify / init-read / test-notify / system-test のいずれか"
         required: true
         default: "run-notify"
         type: choice
@@ -17,6 +17,7 @@ on:
           - run-notify
           - init-read
           - test-notify
+          - system-test
 
 permissions:
   contents: write  # state/*.json を自動コミットするために必要
@@ -67,6 +68,12 @@ jobs:
           DISCORD_WEBHOOK_URL_DAITO: ${{ secrets.DISCORD_WEBHOOK_URL_DAITO }}
           DISCORD_WEBHOOK_URL_SYSTEM: ${{ secrets.DISCORD_WEBHOOK_URL_SYSTEM }}
         run: python test_notify.py
+
+      - name: system-test を実行（システム通知チャンネルへの疎通確認）
+        if: steps.mode.outputs.mode == 'system-test'
+        env:
+          DISCORD_WEBHOOK_URL_SYSTEM: ${{ secrets.DISCORD_WEBHOOK_URL_SYSTEM }}
+        run: python test_system_notify.py
 
       - name: 状態ファイル(state/*.json)の変更を確認
         id: diff
