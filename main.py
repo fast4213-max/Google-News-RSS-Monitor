@@ -6,6 +6,8 @@
   1. feeds.json からRSS URLを読む
   2. RSSを取得・パース (rss.py)
   3. 前回までの既読ID (state/read_<id>.json) と比較し、未読記事を抽出
+  3.5 公開日が STALE_ARTICLE_DAYS 日より古い記事は、既読化のみして通知しない
+      (Googleニュースの検索結果に急に大昔の記事が紛れ込むことがあるため)
   4. 前回持ち越しのキュー (state/queue_<id>.json) を先頭に結合
   5. 先頭 MAX_NOTIFY_PER_RUN 件だけDiscordに通知
   6. 通知できた分だけ既読化。通知しきれなかった分はキューに保存(破棄しない)
@@ -18,6 +20,8 @@ git commit & push する(このスクリプト自体はgit操作を行わない)
 
 import json
 import os
+from datetime import datetime, timedelta, timezone
+from email.utils import parsedate_to_datetime
 
 import logger
 import notifier
@@ -26,6 +30,7 @@ import state_manager
 
 _CONTEXT = "main"
 MAX_NOTIFY_PER_RUN = 10  # Discordのレート制限を避けるための1フィードあたり1回の上限
+STALE_ARTICLE_DAYS = 3   # 記事の公開日がこれより古い場合は「既読化のみ」で通知しない
 
 FEEDS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "feeds.json")
 
@@ -41,6 +46,32 @@ def load_feeds() -> list[dict]:
                 f"feeds.json の要素に id/name/url/webhook_env が揃っていません: {feed}"
             )
     return feeds
+
+
+def is_stale(pub_date: str, ctx: str) -> bool:
+    """
+    記事のpubDateが STALE_ARTICLE_DAYS 日より古いかどうかを判定する。
+
+    Googleニュースの検索結果は、稀に「半年前に書かれた記事」等が
+    何かのきっかけで急に(今クロール/再インデックスされて)出現することがある。
+    そのような記事は「新着」として通知する意味が薄いため、既読化だけして
+    通知はスキップする。
+
+    pub_date が空文字列だったり、想定外のフォーマットでパースできない場合は
+    安全側に倒して stale とは判定しない(=通知する)。取りこぼしを防ぐため。
+    """
+    if not pub_date:
+        return False
+    try:
+        published_at = parsedate_to_datetime(pub_date)
+        if published_at.tzinfo is None:
+            published_at = published_at.replace(tzinfo=timezone.utc)
+    except (TypeError, ValueError) as e:
+        logger.warn(ctx, f"pubDateのパースに失敗したため日付フィルタをスキップします: {pub_date!r} ({e})")
+        return False
+
+    threshold = datetime.now(timezone.utc) - timedelta(days=STALE_ARTICLE_DAYS)
+    return published_at < threshold
 
 
 def process_feed(feed: dict) -> None:
@@ -68,7 +99,28 @@ def process_feed(feed: dict) -> None:
     read_ids = state_manager.load_read_ids(feed_id)
     unread_new = [a for a in reversed(articles) if a.id not in read_ids]
 
+    # 2.5 公開日が STALE_ARTICLE_DAYS 日より古い記事は「既読化のみ」で通知対象から外す
+    #     (Googleニュースの検索結果に急に大昔の記事が紛れ込むことがあるため)
+    stale_ids = set()
+    fresh_unread = []
+    for a in unread_new:
+        if is_stale(a.pub_date, ctx):
+            stale_ids.add(a.id)
+        else:
+            fresh_unread.append(a)
+
+    if stale_ids:
+        read_ids = read_ids | stale_ids
+        state_manager.save_read_ids(feed_id, read_ids)
+        logger.info(
+            ctx,
+            f"公開日が{STALE_ARTICLE_DAYS}日以上前の記事を{len(stale_ids)}件、"
+            "通知せず既読化しました",
+        )
+    unread_new = fresh_unread
+
     # 3. 前回持ち越しキューを先頭に結合 (古いものを優先して通知するため)
+    #    (queue内の記事は、キューに入った時点で既に新鮮度チェック済みのため、ここでは再チェックしない)
     queued = state_manager.load_queue(feed_id)
     queued_ids = {q["id"] for q in queued}
     # キューにあるがすでに既読扱いになっているものは除外(念のための整合性チェック)
