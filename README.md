@@ -309,5 +309,8 @@ A. 仕様通りです。1回の実行につき最大10件までしか送信し�
 **Q. Discord送信が `status=403 body=error code: 1010` で失敗する**
 A. これはDiscord側ではなく、その手前にいる **Cloudflareのbot判定** による拒否です。Pythonの `urllib` はデフォルトで `Python-urllib/3.12` のような機械的なUser-Agentを送るため、スクリプトからのアクセスとして弾かれることがあります。対処済み: `notifier.py` の `_post()` でブラウザ相当の `User-Agent` ヘッダーを明示的に付与しています（`rss.py` のRSS取得時と同じ値）。もし別環境でこのエラーが再発したら、`notifier.py` 冒頭の `USER_AGENT` を最新のブラウザUAに更新してみてください。
 
+**Q. 通知にGoogleニュースの埋め込みカード（サムネイル付きプレビュー）が出てしまう**
+A. 対処済みです。`notifier.py` の `send_article()` でリンクを `<URL>` のように山括弧で囲んでいます。Discordの仕様でこう書くとリンク自体はクリック可能なまま、自動生成される埋め込みプレビューだけが消え、指定通り「タイトルとリンクだけ」のシンプルな通知になります。
+
 **Q. GitHub Actionsのcronは本当に使ってない？**
 A. `.github/workflows/dispatch.yml` の `on:` セクションを見てください。`repository_dispatch` と手動デバッグ用の `workflow_dispatch` のみで、`schedule:` は記述していません。
