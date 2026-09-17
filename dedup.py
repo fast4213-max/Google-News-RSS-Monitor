@@ -113,14 +113,24 @@ def _similarity(a: str, b: str) -> float:
     return 2 * len(set_a & set_b) / (len(set_a) + len(set_b))
 
 
-def _parse_iso(value: str, fallback: datetime) -> datetime:
-    """wall clockのISO時刻文字列をパースする。壊れていればfallbackを返す。"""
+_EPOCH = datetime.min.replace(tzinfo=timezone.utc)
+
+
+def _parse_iso(value: str) -> datetime:
+    """
+    wall clockのISO時刻文字列をパースする。
+    欠けている/壊れている場合は _EPOCH (大昔) を返す。
+    これにより、旧形式のクラスタ(last_notified_atが無い)やパース不能なデータは
+    「大昔に通知した扱い」になり、古すぎるクラスタの破棄(cluster_max_age_hours)で
+    自然に一掃されるか、新しいウィンドウとして扱われる(=不正な状態のまま
+    ずっとブロックされ続けることがない)。
+    """
     if value:
         try:
             return datetime.fromisoformat(value)
         except ValueError:
             pass
-    return fallback
+    return _EPOCH
 
 
 def classify_articles(
@@ -157,7 +167,7 @@ def classify_articles(
     # 古すぎるクラスタは破棄(無関係な後日の記事が誤って同じ話題に混ざるのを防ぐ)
     fresh_clusters = []
     for c in clusters:
-        last_notified = _parse_iso(c.get("last_notified_at", ""), now)
+        last_notified = _parse_iso(c.get("last_notified_at", ""))
         if now - last_notified <= timedelta(hours=cluster_max_age_hours):
             fresh_clusters.append(c)
     clusters = fresh_clusters
@@ -177,7 +187,7 @@ def classify_articles(
                 best_cluster = c
 
         if best_cluster is not None and best_ratio >= similarity_threshold:
-            elapsed = now - _parse_iso(best_cluster["last_notified_at"], now)
+            elapsed = now - _parse_iso(best_cluster.get("last_notified_at", ""))
             if elapsed >= timedelta(minutes=followup_minutes):
                 # 通知が途絶えてから followup_minutes 分経過 → 新しい枠を開く
                 best_cluster["notified_count"] = 0
