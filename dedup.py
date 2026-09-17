@@ -7,19 +7,23 @@ Discordに同じ話題の記事が延々と流れ続けるのを防ぐための�
   - Googleニュースの検索RSSは、同じ出来事について各社(産経/毎日/Yahoo!ニュース等)が
     それぞれ別記事(別guid)を出すため、そのまま通知すると同じ話題が何件も並んでしまう。
   - タイトルを正規化して類似度を比較し、「同じ話題」とみなせる記事をクラスタにまとめる。
-  - 1つの話題について、最初の dedup_first_n 件（デフォルト2件、= 速報を最速で伝える2社分）は
-    そのまま通知する。
-  - それ以降は、このシステムが最後にその話題を通知した「実行時刻(wall clock)」から
-    dedup_followup_minutes 分（デフォルト30分）以上経っている場合のみ「続報: 」を付けて通知する。
-    経過時間は記事自身のpubDate同士ではなく、必ず「このプログラムが実際に処理した時刻」を
-    基準にする。記事のpubDateはGoogleニュースが古い記事を後から再インデックスすると
-    あてにならない(実際の掲載時刻とズレる)ことがあるため、これを基準にすると
-    「1回の実行内でたまたまpubDateが数時間ズレている古い重複記事」まで続報として
-    通知してしまうバグがあった。wall clock基準にすることで、同じ実行内で処理された記事は
-    (pubDateがバラバラでも)確実にまとめて間引かれ、次の定期実行(≒1時間後)になって
-    初めて続報として通知される。
-  - dedup_followup_minutes 経っていない同話題の記事は、既読化だけして通知しない
-    （ノイズ削減の本体）。
+  - 1つの話題について、**「直近 dedup_followup_minutes 分の間」に通知できるのは
+    最大 dedup_first_n 件まで**というスライディングウィンドウ方式で間引く。
+      - 最初の1件目・2件目(first_n=2)はそのまま通知する。
+      - その後 dedup_followup_minutes 分（デフォルト30分）以内に来た同話題の記事は
+        既読化だけして通知しない（ここがノイズ削減の本体）。
+      - dedup_followup_minutes 分、通知が無いまま経過すると「新しい枠」が開き、
+        再びそこから first_n 件まで通知できるようになる（速報→続報→続報…と、
+        本当に展開のある事件は各段階で最大2件ずつ拾える）。
+    タイトルへのラベル付与は行わない(記事自身のタイトルにすでに【続報】等が
+    付いていればそのまま表示され、こちら側で追加の接頭辞は付けない)。
+  - 経過時間の判定は記事自身のpubDateではなく、必ず「このプログラムが実際に処理した時刻
+    (wall clock)」を基準にする。記事のpubDateはGoogleニュースが古い記事を後から
+    再インデックスするとあてにならない(実際の掲載時刻とズレる)ことがあるため、
+    これを基準にすると「1回の実行内でたまたまpubDateが数時間ズレている古い重複記事」まで
+    続報として通知してしまうバグがあった。wall clock基準にすることで、同じ実行内で
+    処理された記事は(pubDateがバラバラでも)確実にまとめて間引かれ、次の定期実行
+    (≒1時間後)になって初めて新しい枠として通知される。
   - クラスタ情報は state/clusters_<feed_id>.json に永続化する。
     dedup_cluster_max_age_hours より古いクラスタは自然に破棄され、
     無関係な後日の記事が誤って同じクラスタに混ざるのを防ぐ。
@@ -36,14 +40,12 @@ from datetime import datetime, timedelta, timezone
 
 STATE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "state")
 
-DEFAULT_FIRST_N = 2                  # そのまま通知する「最速N件」
-DEFAULT_FOLLOWUP_MINUTES = 30        # 最後の通知(wall clock)からこれ以上経てば続報として通知
+DEFAULT_FIRST_N = 2                  # 各ウィンドウでそのまま通知する最大件数
+DEFAULT_FOLLOWUP_MINUTES = 30        # 通知が途絶えてからこれ以上経つと新しいウィンドウが開く
 DEFAULT_SIMILARITY_THRESHOLD = 0.28  # タイトル類似度(bigram Dice係数)がこれ以上なら同じ話題とみなす
 DEFAULT_CLUSTER_MAX_AGE_HOURS = 72  # これより古いクラスタは破棄する
 MAX_TITLES_PER_CLUSTER = 5          # クラスタ内に保持する正規化タイトルの上限(メモリ節約)
 MAX_CLUSTERS_PER_FEED = 300         # フィードあたりのクラスタ保持上限(古い順に間引く)
-
-FOLLOWUP_LABEL = "続報: "
 
 _LEADING_TAG_RE = re.compile(r"^[\s]*[【\[（(][^】\]）)]{0,20}[】\]）)]\s*")
 _STRIP_CHARS_RE = re.compile(r"[\s　、。,.!?！？「」『』\"'\-ー・:：]")
@@ -135,8 +137,12 @@ def classify_articles(
 
     articles: [{"id", "title", "link", "pub_date"}, ...] 古い順
     戻り値: (to_notify, skip_ids)
-      to_notify: 通知する記事のリスト(古い順、続報は「続報: 」が付与される)
+      to_notify: 通知する記事のリスト(古い順、タイトルは一切書き換えない)
       skip_ids : 通知せず既読化だけする記事IDの集合
+
+    「直近 followup_minutes 分の間に通知できるのは最大 first_n 件まで」という
+    スライディングウィンドウ方式。followup_minutes 分、通知が無いまま経過すると
+    枠がリセットされ、再び first_n 件まで通知できるようになる。
 
     経過時間の判定は、記事自身のpubDateではなく必ず「このプログラムを実際に
     呼び出した時刻(now、通常は処理開始時のwall clock)」を基準にする。
@@ -172,15 +178,13 @@ def classify_articles(
 
         if best_cluster is not None and best_ratio >= similarity_threshold:
             elapsed = now - _parse_iso(best_cluster["last_notified_at"], now)
-            if best_cluster["notified_count"] < first_n:
-                to_notify.append(dict(a))
-            elif elapsed >= timedelta(minutes=followup_minutes):
-                labeled = dict(a)
-                labeled["title"] = f"{FOLLOWUP_LABEL}{a['title']}"
-                to_notify.append(labeled)
-            else:
+            if elapsed >= timedelta(minutes=followup_minutes):
+                # 通知が途絶えてから followup_minutes 分経過 → 新しい枠を開く
+                best_cluster["notified_count"] = 0
+            if best_cluster["notified_count"] >= first_n:
                 skip_ids.add(a["id"])
                 continue
+            to_notify.append(dict(a))
             best_cluster["notified_count"] += 1
             best_cluster["last_notified_at"] = now.isoformat()
             best_cluster["titles"].append(norm)

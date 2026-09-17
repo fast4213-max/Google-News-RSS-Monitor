@@ -104,8 +104,9 @@ def test_diff_and_queue_logic():
 def test_dedup_clustering():
     """
     同じ出来事を複数社が別記事(別guid)で配信した場合に、
-    最速2件だけ通知され、以降はこのプログラムの実行時刻(wall clock)基準で
-    dedup_followup_minutes 経つまでは間引かれ、経てば「続報: 」付きで通知されることを確認する。
+    最初のウィンドウで最速2件だけ通知され、dedup_followup_minutes以内の追加分は
+    間引かれ、経過後は新しいウィンドウとしてまた最大2件通知されることを確認する。
+    タイトルへのラベル付与は行わない。
     """
     feed_id = "test_dedup_logic"
     path = dedup._clusters_path(feed_id)
@@ -155,20 +156,37 @@ def test_dedup_clustering():
         assert to_notify_soon == [] and skip_ids_soon == {"id_too_soon"}
         print("OK: test_dedup_clustering (30分未満はまだ間引かれる)")
 
-        # 実行時刻(wall clock)で40分後(followup_minutes=30以上)なら「続報: 」付きで通知されること
-        followup = {
-            "id": "id_followup",
-            "title": titles[0],
-            "link": "https://example.com/followup",
-            "pub_date": (base + timedelta(minutes=40)).strftime("%a, %d %b %Y %H:%M:%S GMT"),
-        }
+        # 実行時刻(wall clock)で40分後(followup_minutes=30以上)は新しいウィンドウが開き、
+        # タイトルを書き換えずに再び最大2件まで通知されること
+        followups = [
+            {
+                "id": "id_followup_a",
+                "title": titles[0],
+                "link": "https://example.com/followup_a",
+                "pub_date": (base + timedelta(minutes=40)).strftime("%a, %d %b %Y %H:%M:%S GMT"),
+            },
+            {
+                "id": "id_followup_b",
+                "title": titles[1],
+                "link": "https://example.com/followup_b",
+                "pub_date": (base + timedelta(minutes=41)).strftime("%a, %d %b %Y %H:%M:%S GMT"),
+            },
+            {
+                "id": "id_followup_c",
+                "title": titles[2],
+                "link": "https://example.com/followup_c",
+                "pub_date": (base + timedelta(minutes=42)).strftime("%a, %d %b %Y %H:%M:%S GMT"),
+            },
+        ]
         to_notify_followup, skip_ids_followup = dedup.classify_articles(
-            feed_id, [followup], now=base + timedelta(minutes=40)
+            feed_id, followups, now=base + timedelta(minutes=40)
         )
-        assert len(to_notify_followup) == 1
-        assert to_notify_followup[0]["title"].startswith(dedup.FOLLOWUP_LABEL)
-        assert skip_ids_followup == set()
-        print("OK: test_dedup_clustering (30分経過後は続報として通知される)")
+        notified_followup_ids = {a["id"] for a in to_notify_followup}
+        assert notified_followup_ids == {"id_followup_a", "id_followup_b"}, notified_followup_ids
+        assert skip_ids_followup == {"id_followup_c"}
+        assert to_notify_followup[0]["title"] == titles[0]
+        assert to_notify_followup[1]["title"] == titles[1]
+        print("OK: test_dedup_clustering (30分経過後は新しいウィンドウでまた最大2件、ラベル無し)")
     finally:
         if os.path.exists(path):
             os.remove(path)
