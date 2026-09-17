@@ -3,7 +3,9 @@
 Discord Webhook 通知処理。
 
 方針:
-  - 1メッセージ = 1記事。「タイトル / (改行) / リンク」の指定フォーマット。
+  - 1メッセージ = 1記事。タイトル自体をリンク化した embed で送信する
+    (通常のメッセージ本文では Markdown の [タイトル](URL) 記法が効かないため、
+    タイトルをクリック可能にするには embed の title+url を使う必要がある)。
   - Discord Webhook のレート制限(概ね 5リクエスト/2秒 程度)を避けるため、
     送信の合間に短いスリープを入れる。
   - エラー通知は通常通知と見分けやすいよう先頭に絵文字を付ける。
@@ -35,7 +37,7 @@ USER_AGENT = (
     "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 )
 
-SEPARATOR = "-" * 20  # 記事と記事の境目をひと目でわかりやすくする区切り線
+EMBED_TITLE_MAX_LENGTH = 256  # Discord embed titleの上限文字数(超えると400エラーになる)
 
 
 def _resolve_webhook_url(webhook_env: str) -> str:
@@ -53,9 +55,10 @@ def _resolve_webhook_url(webhook_env: str) -> str:
     return url
 
 
-def _post(webhook_env: str, content: str) -> None:
+def _post(webhook_env: str, body: dict) -> None:
     """
     Discord Webhookへ1回分のメッセージをPOSTする。
+    body はDiscord Webhook APIのペイロード全体(例: {"content": ...} や {"embeds": [...]}）。
 
     429 (Too Many Requests、レート制限)が返ってきた場合は、Discordが返す
     Retry-After ヘッダー(あと何秒待てば良いか)に従って待機し、
@@ -64,7 +67,7 @@ def _post(webhook_env: str, content: str) -> None:
     それでも失敗する場合は例外を送出し、呼び出し元(send_articles)に委ねる。
     """
     url = _resolve_webhook_url(webhook_env)
-    payload = json.dumps({"content": content}).encode("utf-8")
+    payload = json.dumps(body).encode("utf-8")
 
     for attempt in range(1, RATE_LIMIT_MAX_RETRIES + 2):  # 通常送信1回 + 再試行分
         req = urllib.request.Request(
@@ -109,25 +112,22 @@ def _post(webhook_env: str, content: str) -> None:
 
 def send_article(webhook_env: str, feed_name: str, title: str, link: str) -> None:
     """
-    指定フォーマットで1記事を、指定のWebhook(=そのフィード専用チャンネル)に通知する。
-      <title>
-      <link>
-      --------------------
+    1記事を、指定のWebhook(=そのフィード専用チャンネル)に通知する。
+    タイトル自体をクリック可能なリンクにするため、embed の title+url を使う
+    (通常のcontentにMarkdownリンクを書いても文字列のまま表示され、リンク化されないため)。
+
+    embed には description 等を付けないため、Googleニュース等の埋め込み
+    プレビュー(サムネイル付きカード)は表示されず、タイトルだけのシンプルな
+    通知になる。embed自体がカード状に表示され左端に色付きの線が入るため、
+    テキストの区切り線を別途入れなくても記事ごとの境目は分かりやすい。
 
     フィード名の見出し(【○○】)は表示しない。チャンネル自体がフィードごとに
     分かれているため、メッセージ内で改めてフィード名を出す必要がないため。
     feed_name はログ出力にのみ使用する。
-
-    リンクは Discord の記法で <URL> のように山括弧で囲む。
-    こうするとリンクはクリック可能なまま、Googleニュース等の埋め込みプレビュー
-    (サムネイル付きカード)が表示されなくなり、タイトルとURLだけのシンプルな
-    通知になる。
-
-    末尾に区切り線を入れて、複数の通知が連続で流れたときに1記事ずつの
-    境目がひと目でわかるようにしている。
     """
-    content = f"{title}\n<{link}>\n{SEPARATOR}"
-    _post(webhook_env, content)
+    safe_title = title if len(title) <= EMBED_TITLE_MAX_LENGTH else title[:EMBED_TITLE_MAX_LENGTH - 1] + "…"
+    body = {"embeds": [{"title": safe_title, "url": link}]}
+    _post(webhook_env, body)
     logger.info(_CONTEXT, f"通知送信OK ({webhook_env}): {title}")
 
 
@@ -180,7 +180,7 @@ def send_error(context: str, message: str, webhook_env: str | None = None) -> No
     target_env = webhook_env or SYSTEM_WEBHOOK_ENV
     content = f"⚠️ **RSS通知エラー** [{context}]\n```\n{message[:1800]}\n```"
     try:
-        _post(target_env, content)
+        _post(target_env, {"content": content})
     except Exception as e:
         logger.error(
             _CONTEXT,
