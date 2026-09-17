@@ -33,7 +33,7 @@ USER_AGENT = (
     "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 )
 
-SEPARATOR = "-" * 50  # 記事と記事の境目をひと目でわかりやすくする区切り線
+SEPARATOR = "-" * 70  # 記事と記事の境目をひと目でわかりやすくする区切り線
 
 
 def _resolve_webhook_url(webhook_env: str) -> str:
