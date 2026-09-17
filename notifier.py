@@ -79,8 +79,13 @@ def send_article(webhook_env: str, feed_name: str, title: str, link: str) -> Non
       【<feed_name>】
       <title>
       <link>
+
+    リンクは Discord の記法で <URL> のように山括弧で囲む。
+    こうするとリンクはクリック可能なまま、Googleニュース等の埋め込みプレビュー
+    (サムネイル付きカード)が表示されなくなり、タイトルとURLだけのシンプルな
+    通知になる。
     """
-    content = f"【{feed_name}】\n{title}\n{link}"
+    content = f"【{feed_name}】\n{title}\n<{link}>"
     _post(webhook_env, content)
     logger.info(_CONTEXT, f"通知送信OK ({webhook_env}): {title}")
 
