@@ -25,6 +25,14 @@ _CONTEXT = "discord-send"
 SEND_INTERVAL_SECONDS = 1.2  # レート制限回避のための送信間隔
 SYSTEM_WEBHOOK_ENV = "DISCORD_WEBHOOK_URL_SYSTEM"  # フィード特定不能な異常時の送り先
 
+# Discord Webhookはcloudflareの背後にあり、urllibのデフォルトUser-Agent
+# ("Python-urllib/3.12") だとbot判定で403 (Cloudflareエラー1010) になることがあるため、
+# ブラウザ相当のUser-Agentを明示的に付ける。rss.pyと同じ値で統一。
+USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+)
+
 
 def _resolve_webhook_url(webhook_env: str) -> str:
     """
@@ -47,7 +55,10 @@ def _post(webhook_env: str, content: str) -> None:
     req = urllib.request.Request(
         url,
         data=payload,
-        headers={"Content-Type": "application/json"},
+        headers={
+            "Content-Type": "application/json",
+            "User-Agent": USER_AGENT,
+        },
         method="POST",
     )
     try:
