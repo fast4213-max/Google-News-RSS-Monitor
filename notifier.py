@@ -76,16 +76,19 @@ def _post(webhook_env: str, content: str) -> None:
 def send_article(webhook_env: str, feed_name: str, title: str, link: str) -> None:
     """
     指定フォーマットで1記事を、指定のWebhook(=そのフィード専用チャンネル)に通知する。
-      【<feed_name>】
       <title>
       <link>
+
+    フィード名の見出し(【○○】)は表示しない。チャンネル自体がフィードごとに
+    分かれているため、メッセージ内で改めてフィード名を出す必要がないため。
+    feed_name はログ出力にのみ使用する。
 
     リンクは Discord の記法で <URL> のように山括弧で囲む。
     こうするとリンクはクリック可能なまま、Googleニュース等の埋め込みプレビュー
     (サムネイル付きカード)が表示されなくなり、タイトルとURLだけのシンプルな
     通知になる。
     """
-    content = f"【{feed_name}】\n{title}\n<{link}>"
+    content = f"{title}\n<{link}>"
     _post(webhook_env, content)
     logger.info(_CONTEXT, f"通知送信OK ({webhook_env}): {title}")
 
