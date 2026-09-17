@@ -4,6 +4,9 @@
 - RSSパース (rss.parse_items)
 - 既読差分抽出とキュー持ち越しのロジック (main.process_feed 相当を簡易再現)
 """
+import os
+
+import dedup
 import rss
 
 SAMPLE_RSS = """<?xml version="1.0" encoding="UTF-8"?>
@@ -98,10 +101,67 @@ def test_diff_and_queue_logic():
     print("OK: test_diff_and_queue_logic (10件制限)")
 
 
+def test_dedup_clustering():
+    """
+    同じ出来事を複数社が別記事(別guid)で配信した場合に、
+    最速2件だけ通知され、以降(30分以内)は間引かれることを確認する。
+    """
+    feed_id = "test_dedup_logic"
+    path = dedup._clusters_path(feed_id)
+    if os.path.exists(path):
+        os.remove(path)
+
+    from datetime import datetime, timedelta, timezone
+
+    base = datetime(2026, 9, 17, 3, 0, tzinfo=timezone.utc)
+    titles = [
+        "スーパーで従業員刺される「叫びながら近づいて刺した」80歳元夫を現行犯逮捕 大阪府大東市 - MBSニュース",
+        "【速報】女性従業員は搬送先の病院で死亡 スーパーで従業員が刃物で刺された事件"
+        "「叫びながら近づいて刺した」80歳元夫を現行犯逮捕 大阪府大東市 - TBS NEWS DIG",
+        "【速報】スーパーで「従業員刺された」と通報 女性けが 搬送時意識あり "
+        "80歳男を殺人未遂容疑で逮捕 大阪・大東市 - Yahoo!ニュース",
+        "大東市で桜まつり開催 来月10日から - 地元新聞",  # 無関係な別の話題
+    ]
+    articles = [
+        {
+            "id": f"id{i}",
+            "title": t,
+            "link": f"https://example.com/{i}",
+            "pub_date": (base + timedelta(minutes=i * 3)).strftime("%a, %d %b %Y %H:%M:%S GMT"),
+        }
+        for i, t in enumerate(titles)
+    ]
+
+    try:
+        to_notify, skip_ids = dedup.classify_articles(feed_id, articles, now=base)
+        notified_ids = {a["id"] for a in to_notify}
+        assert notified_ids == {"id0", "id1", "id3"}, f"通知される想定と違う: {notified_ids}"
+        assert skip_ids == {"id2"}, f"間引かれる想定と違う: {skip_ids}"
+        print("OK: test_dedup_clustering (同一話題の最速2件のみ通知)")
+
+        # 40分後の続報は通知され、【続報】が付与されること
+        followup = {
+            "id": "id_followup",
+            "title": titles[0],
+            "link": "https://example.com/followup",
+            "pub_date": (base + timedelta(minutes=40)).strftime("%a, %d %b %Y %H:%M:%S GMT"),
+        }
+        to_notify2, skip_ids2 = dedup.classify_articles(
+            feed_id, [followup], now=base + timedelta(minutes=40)
+        )
+        assert len(to_notify2) == 1 and to_notify2[0]["title"].startswith(dedup.FOLLOWUP_LABEL)
+        assert skip_ids2 == set()
+        print("OK: test_dedup_clustering (30分経過後は続報として通知)")
+    finally:
+        if os.path.exists(path):
+            os.remove(path)
+
+
 if __name__ == "__main__":
     test_parse_success()
     test_parse_no_channel_raises()
     test_parse_no_link_raises()
     test_parse_not_xml_raises()
     test_diff_and_queue_logic()
+    test_dedup_clustering()
     print("\n全テスト成功")

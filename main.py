@@ -23,6 +23,7 @@ import os
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 
+import dedup
 import logger
 import notifier
 import rss
@@ -33,6 +34,13 @@ DEFAULT_MAX_NOTIFY_PER_RUN = 10  # 1フィードあたり1回で通知する上�
 DEFAULT_STALE_ARTICLE_DAYS = 3   # 記事の公開日がこれより古ければ「既読化のみ」で通知しないデフォルト値
 # どちらも feeds.json 側で "max_per_run" / "stale_days" を指定すればフィードごとに上書きできる
 # (例: 話題が広く更新の速い「中東情勢」だけ上限を増やす、期間を短くする、など)
+
+# 同一話題(複数社が同じ出来事を別記事で配信したもの)をまとめるクラスタリングのデフォルト値。
+# いずれも feeds.json 側で "dedup_first_n" / "dedup_followup_minutes" /
+# "dedup_similarity_threshold" を指定すればフィードごとに上書きできる。
+DEFAULT_DEDUP_FIRST_N = dedup.DEFAULT_FIRST_N
+DEFAULT_DEDUP_FOLLOWUP_MINUTES = dedup.DEFAULT_FOLLOWUP_MINUTES
+DEFAULT_DEDUP_SIMILARITY_THRESHOLD = dedup.DEFAULT_SIMILARITY_THRESHOLD
 
 FEEDS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "feeds.json")
 
@@ -93,6 +101,11 @@ def process_feed(feed: dict) -> None:
     webhook_env = feed["webhook_env"]
     max_per_run = feed.get("max_per_run", DEFAULT_MAX_NOTIFY_PER_RUN)
     stale_days = feed.get("stale_days", DEFAULT_STALE_ARTICLE_DAYS)
+    dedup_first_n = feed.get("dedup_first_n", DEFAULT_DEDUP_FIRST_N)
+    dedup_followup_minutes = feed.get("dedup_followup_minutes", DEFAULT_DEDUP_FOLLOWUP_MINUTES)
+    dedup_similarity_threshold = feed.get(
+        "dedup_similarity_threshold", DEFAULT_DEDUP_SIMILARITY_THRESHOLD
+    )
     ctx = f"feed:{feed_id}"
 
     # 1. RSS取得・パース
@@ -133,19 +146,38 @@ def process_feed(feed: dict) -> None:
         )
     unread_new = fresh_unread
 
+    # 2.6 同一話題(複数社が同じ出来事を別記事で配信したもの)をクラスタリングし、
+    #     最速N件だけそのまま通知、以降は前回通知から一定時間経った「続報」のみ通知する。
+    #     間引かれた記事は「既読化のみ」で通知しない(通知が同じ話題で埋まるのを防ぐ)。
+    unread_new_dicts_raw = [
+        {"id": a.id, "title": a.title, "link": a.link, "pub_date": a.pub_date}
+        for a in unread_new
+    ]
+    to_notify_dicts, dedup_skip_ids = dedup.classify_articles(
+        feed_id,
+        unread_new_dicts_raw,
+        first_n=dedup_first_n,
+        followup_minutes=dedup_followup_minutes,
+        similarity_threshold=dedup_similarity_threshold,
+    )
+    if dedup_skip_ids:
+        read_ids = read_ids | dedup_skip_ids
+        state_manager.save_read_ids(feed_id, read_ids)
+        logger.info(
+            ctx,
+            f"同一話題の重複記事を{len(dedup_skip_ids)}件、通知せず既読化しました",
+        )
+
     # 3. 前回持ち越しキューを先頭に結合 (古いものを優先して通知するため)
-    #    (queue内の記事は、キューに入った時点で既に新鮮度チェック済みのため、ここでは再チェックしない)
+    #    (queue内の記事は、キューに入った時点で既に新鮮度チェック済み・クラスタ判定済みのため、
+    #     ここでは再チェックしない)
     queued = state_manager.load_queue(feed_id)
     queued_ids = {q["id"] for q in queued}
     # キューにあるがすでに既読扱いになっているものは除外(念のための整合性チェック)
     queued = [q for q in queued if q["id"] not in read_ids]
 
     # 新規未読のうち、キューに重複して入っているものは除外
-    unread_new_dicts = [
-        {"id": a.id, "title": a.title, "link": a.link, "pub_date": a.pub_date}
-        for a in unread_new
-        if a.id not in queued_ids
-    ]
+    unread_new_dicts = [d for d in to_notify_dicts if d["id"] not in queued_ids]
 
     pending = queued + unread_new_dicts  # 通知すべき全件(古い順)
 
