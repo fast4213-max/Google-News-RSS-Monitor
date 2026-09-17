@@ -7,11 +7,19 @@ Discordに同じ話題の記事が延々と流れ続けるのを防ぐための�
   - Googleニュースの検索RSSは、同じ出来事について各社(産経/毎日/Yahoo!ニュース等)が
     それぞれ別記事(別guid)を出すため、そのまま通知すると同じ話題が何件も並んでしまう。
   - タイトルを正規化して類似度を比較し、「同じ話題」とみなせる記事をクラスタにまとめる。
-  - 1つの話題について、最初の dedup_first_n 件（デフォルト2件、= 速報を最速で伝える2社分）だけ
-    そのまま通知し、それ以降の同話題の記事は既読化のみで通知しない（ノイズ削減の本体）。
-    (Googleニュースは同じ出来事の記事を何時間も経ってから再インデックスすることがあり、
-    「一定時間経てば続報として再通知する」方式だと単なる古い重複記事まで拾ってしまうため、
-    時間による再通知は行わない設計にしている)
+  - 1つの話題について、最初の dedup_first_n 件（デフォルト2件、= 速報を最速で伝える2社分）は
+    そのまま通知する。
+  - それ以降は、このシステムが最後にその話題を通知した「実行時刻(wall clock)」から
+    dedup_followup_minutes 分（デフォルト30分）以上経っている場合のみ「続報: 」を付けて通知する。
+    経過時間は記事自身のpubDate同士ではなく、必ず「このプログラムが実際に処理した時刻」を
+    基準にする。記事のpubDateはGoogleニュースが古い記事を後から再インデックスすると
+    あてにならない(実際の掲載時刻とズレる)ことがあるため、これを基準にすると
+    「1回の実行内でたまたまpubDateが数時間ズレている古い重複記事」まで続報として
+    通知してしまうバグがあった。wall clock基準にすることで、同じ実行内で処理された記事は
+    (pubDateがバラバラでも)確実にまとめて間引かれ、次の定期実行(≒1時間後)になって
+    初めて続報として通知される。
+  - dedup_followup_minutes 経っていない同話題の記事は、既読化だけして通知しない
+    （ノイズ削減の本体）。
   - クラスタ情報は state/clusters_<feed_id>.json に永続化する。
     dedup_cluster_max_age_hours より古いクラスタは自然に破棄され、
     無関係な後日の記事が誤って同じクラスタに混ざるのを防ぐ。
@@ -25,15 +33,17 @@ import json
 import os
 import re
 from datetime import datetime, timedelta, timezone
-from email.utils import parsedate_to_datetime
 
 STATE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "state")
 
-DEFAULT_FIRST_N = 2                  # そのまま通知する「最速N件」(これを超えた分は間引く)
+DEFAULT_FIRST_N = 2                  # そのまま通知する「最速N件」
+DEFAULT_FOLLOWUP_MINUTES = 30        # 最後の通知(wall clock)からこれ以上経てば続報として通知
 DEFAULT_SIMILARITY_THRESHOLD = 0.28  # タイトル類似度(bigram Dice係数)がこれ以上なら同じ話題とみなす
 DEFAULT_CLUSTER_MAX_AGE_HOURS = 72  # これより古いクラスタは破棄する
 MAX_TITLES_PER_CLUSTER = 5          # クラスタ内に保持する正規化タイトルの上限(メモリ節約)
 MAX_CLUSTERS_PER_FEED = 300         # フィードあたりのクラスタ保持上限(古い順に間引く)
+
+FOLLOWUP_LABEL = "続報: "
 
 _LEADING_TAG_RE = re.compile(r"^[\s]*[【\[（(][^】\]）)]{0,20}[】\]）)]\s*")
 _STRIP_CHARS_RE = re.compile(r"[\s　、。,.!?！？「」『』\"'\-ー・:：]")
@@ -101,15 +111,12 @@ def _similarity(a: str, b: str) -> float:
     return 2 * len(set_a & set_b) / (len(set_a) + len(set_b))
 
 
-def _effective_time(pub_date: str, fallback: datetime) -> datetime:
-    """記事の実質的な時刻。pubDateが無い/パース不能ならfallback(通常は処理時刻)を使う。"""
-    if pub_date:
+def _parse_iso(value: str, fallback: datetime) -> datetime:
+    """wall clockのISO時刻文字列をパースする。壊れていればfallbackを返す。"""
+    if value:
         try:
-            dt = parsedate_to_datetime(pub_date)
-            if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=timezone.utc)
-            return dt
-        except (TypeError, ValueError):
+            return datetime.fromisoformat(value)
+        except ValueError:
             pass
     return fallback
 
@@ -119,6 +126,7 @@ def classify_articles(
     articles: list[dict],
     now: datetime | None = None,
     first_n: int = DEFAULT_FIRST_N,
+    followup_minutes: int = DEFAULT_FOLLOWUP_MINUTES,
     similarity_threshold: float = DEFAULT_SIMILARITY_THRESHOLD,
     cluster_max_age_hours: int = DEFAULT_CLUSTER_MAX_AGE_HOURS,
 ) -> tuple[list[dict], set[str]]:
@@ -127,8 +135,13 @@ def classify_articles(
 
     articles: [{"id", "title", "link", "pub_date"}, ...] 古い順
     戻り値: (to_notify, skip_ids)
-      to_notify: 通知する記事のリスト(古い順、first_n件を超えた分は含まれない)
-      skip_ids : 通知せず既読化だけする記事IDの集合(同話題でfirst_n件を超えた分)
+      to_notify: 通知する記事のリスト(古い順、続報は「続報: 」が付与される)
+      skip_ids : 通知せず既読化だけする記事IDの集合
+
+    経過時間の判定は、記事自身のpubDateではなく必ず「このプログラムを実際に
+    呼び出した時刻(now、通常は処理開始時のwall clock)」を基準にする。
+    そのため同じ1回の呼び出し内で渡された articles は、たとえpubDateが
+    バラバラでも「同時刻に処理されたもの」として扱われる。
 
     クラスタ状態は state/clusters_<feed_id>.json に保存される。
     """
@@ -138,8 +151,8 @@ def classify_articles(
     # 古すぎるクラスタは破棄(無関係な後日の記事が誤って同じ話題に混ざるのを防ぐ)
     fresh_clusters = []
     for c in clusters:
-        last_event = _effective_time(c.get("last_event_time", ""), now)
-        if now - last_event <= timedelta(hours=cluster_max_age_hours):
+        last_notified = _parse_iso(c.get("last_notified_at", ""), now)
+        if now - last_notified <= timedelta(hours=cluster_max_age_hours):
             fresh_clusters.append(c)
     clusters = fresh_clusters
 
@@ -158,19 +171,25 @@ def classify_articles(
                 best_cluster = c
 
         if best_cluster is not None and best_ratio >= similarity_threshold:
-            if best_cluster["notified_count"] >= first_n:
+            elapsed = now - _parse_iso(best_cluster["last_notified_at"], now)
+            if best_cluster["notified_count"] < first_n:
+                to_notify.append(dict(a))
+            elif elapsed >= timedelta(minutes=followup_minutes):
+                labeled = dict(a)
+                labeled["title"] = f"{FOLLOWUP_LABEL}{a['title']}"
+                to_notify.append(labeled)
+            else:
                 skip_ids.add(a["id"])
                 continue
-            to_notify.append(dict(a))
             best_cluster["notified_count"] += 1
-            best_cluster["last_event_time"] = a.get("pub_date", "") or now.isoformat()
+            best_cluster["last_notified_at"] = now.isoformat()
             best_cluster["titles"].append(norm)
             best_cluster["titles"] = best_cluster["titles"][-MAX_TITLES_PER_CLUSTER:]
         else:
             new_cluster = {
                 "titles": [norm],
                 "notified_count": 1,
-                "last_event_time": a.get("pub_date", "") or now.isoformat(),
+                "last_notified_at": now.isoformat(),
             }
             clusters.append(new_cluster)
             to_notify.append(dict(a))
