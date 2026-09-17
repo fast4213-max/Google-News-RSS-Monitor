@@ -7,6 +7,7 @@
 import os
 
 import dedup
+import main
 import rss
 
 SAMPLE_RSS = """<?xml version="1.0" encoding="UTF-8"?>
@@ -192,6 +193,32 @@ def test_dedup_clustering():
             os.remove(path)
 
 
+def test_fresh_hours_filter():
+    """
+    fresh_hours(時間単位フィルタ)が、stale_days(日単位)より厳しく効くことを確認する。
+    実際に「19:37配信の記事が翌日05:10に急に出現した」事例を再現する。
+    """
+    from datetime import datetime, timedelta, timezone
+
+    now = datetime.now(timezone.utc)
+
+    # 5時間前の記事: fresh_hours=6ならまだ新しい、fresh_hours=3なら古すぎる
+    pub_5h_ago = (now - timedelta(hours=5)).strftime("%a, %d %b %Y %H:%M:%S GMT")
+    assert main.is_too_old_for_fresh_notify(pub_5h_ago, 6, "test") is False
+    assert main.is_too_old_for_fresh_notify(pub_5h_ago, 3, "test") is True
+    print("OK: test_fresh_hours_filter (5時間前の記事はfresh_hoursの値次第で判定が変わる)")
+
+    # 9.5時間前の記事(実際にあった事例): デフォルトのfresh_hours=6では「古すぎる」判定になること
+    pub_9_5h_ago = (now - timedelta(hours=9, minutes=30)).strftime("%a, %d %b %Y %H:%M:%S GMT")
+    assert main.is_too_old_for_fresh_notify(pub_9_5h_ago, main.DEFAULT_FRESH_HOURS, "test") is True
+    print("OK: test_fresh_hours_filter (9.5時間前の記事はデフォルト設定で古すぎる判定になる)")
+
+    # pubDateが空/パース不能な場合は安全側に倒して「古すぎる」と判定しないこと
+    assert main.is_too_old_for_fresh_notify("", 6, "test") is False
+    assert main.is_too_old_for_fresh_notify("不正な日付", 6, "test") is False
+    print("OK: test_fresh_hours_filter (pubDateが無い/壊れている場合は通知する側に倒す)")
+
+
 if __name__ == "__main__":
     test_parse_success()
     test_parse_no_channel_raises()
@@ -199,4 +226,5 @@ if __name__ == "__main__":
     test_parse_not_xml_raises()
     test_diff_and_queue_logic()
     test_dedup_clustering()
+    test_fresh_hours_filter()
     print("\n全テスト成功")

@@ -3,11 +3,12 @@
 通常実行のエントリポイント（1時間毎に cron-job.org -> GitHub Actions 経由で起動される）。
 
 処理の流れ (フィードごと):
-  1. feeds.json からRSS URLを読む(max_per_run / stale_days が指定されていればそれを使う)
+  1. feeds.json からRSS URLを読む(max_per_run / stale_days / fresh_hours が指定されていればそれを使う)
   2. RSSを取得・パース (rss.py)
   3. 前回までの既読ID (state/read_<id>.json) と比較し、未読記事を抽出
-  3.5 公開日が stale_days 日より古い記事は、既読化のみして通知しない
-      (Googleニュースの検索結果に急に大昔の記事が紛れ込むことがあるため)
+  3.5 公開日が stale_days 日より古い記事、または fresh_hours 時間より古い記事は、
+      既読化のみして通知しない
+      (Googleニュースの検索結果に急に大昔/古めの記事が紛れ込むことがあるため)
   4. 前回持ち越しのキュー (state/queue_<id>.json) を先頭に結合
   5. 先頭 max_per_run 件だけDiscordに通知
   6. 通知できた分だけ既読化。通知しきれなかった分はキューに保存(破棄しない)
@@ -31,8 +32,9 @@ import state_manager
 
 _CONTEXT = "main"
 DEFAULT_MAX_NOTIFY_PER_RUN = 10  # 1フィードあたり1回で通知する上限件数のデフォルト値
-DEFAULT_STALE_ARTICLE_DAYS = 3   # 記事の公開日がこれより古ければ「既読化のみ」で通知しないデフォルト値
-# どちらも feeds.json 側で "max_per_run" / "stale_days" を指定すればフィードごとに上書きできる
+DEFAULT_STALE_ARTICLE_DAYS = 3   # 記事の公開日がこれより古ければ「既読化のみ」で通知しないデフォルト値(日単位、大昔の記事対策)
+DEFAULT_FRESH_HOURS = 6          # 記事の公開日がこれより古ければ「既読化のみ」で通知しないデフォルト値(時間単位、同日でも古すぎる記事対策)
+# いずれも feeds.json 側で "max_per_run" / "stale_days" / "fresh_hours" を指定すればフィードごとに上書きできる
 # (例: 話題が広く更新の速い「中東情勢」だけ上限を増やす、期間を短くする、など)
 
 # 同一話題(複数社が同じ出来事を別記事で配信したもの)をまとめるクラスタリングのデフォルト値。
@@ -55,9 +57,9 @@ def load_feeds() -> list[dict]:
             raise RuntimeError(
                 f"feeds.json の要素に id/name/url/webhook_env が揃っていません: {feed}"
             )
-        # max_per_run / stale_days は任意項目。指定されている場合のみ型を確認する
-        # (指定しなければ DEFAULT_MAX_NOTIFY_PER_RUN / DEFAULT_STALE_ARTICLE_DAYS が使われる)
-        for optional_key in ("max_per_run", "stale_days"):
+        # max_per_run / stale_days / fresh_hours は任意項目。指定されている場合のみ型を確認する
+        # (指定しなければ DEFAULT_MAX_NOTIFY_PER_RUN / DEFAULT_STALE_ARTICLE_DAYS / DEFAULT_FRESH_HOURS が使われる)
+        for optional_key in ("max_per_run", "stale_days", "fresh_hours"):
             if optional_key in feed and not isinstance(feed[optional_key], int):
                 raise RuntimeError(
                     f"feeds.json の '{optional_key}' は整数で指定してください: {feed}"
@@ -65,20 +67,18 @@ def load_feeds() -> list[dict]:
     return feeds
 
 
-def is_stale(pub_date: str, stale_days: int, ctx: str) -> bool:
+def is_older_than(pub_date: str, threshold: timedelta, ctx: str) -> bool:
     """
-    記事のpubDateが stale_days 日より古いかどうかを判定する。
+    記事のpubDateが、現在時刻から threshold 分より古いかどうかを判定する。
 
-    Googleニュースの検索結果は、稀に「半年前に書かれた記事」等が
-    何かのきっかけで急に(今クロール/再インデックスされて)出現することがある。
+    Googleニュースの検索結果は、記事の公開日とは無関係に「Google側が最近
+    クロール/再インデックスした記事」が急に上位に出てくることがある
+    (半年前の記事だったり、逆に同日でも配信から何時間も経った記事だったりする)。
     そのような記事は「新着」として通知する意味が薄いため、既読化だけして
     通知はスキップする。
 
-    stale_days はフィードごとに feeds.json の "stale_days" で上書きできる
-    (指定が無ければ DEFAULT_STALE_ARTICLE_DAYS を使う)。
-
     pub_date が空文字列だったり、想定外のフォーマットでパースできない場合は
-    安全側に倒して stale とは判定しない(=通知する)。取りこぼしを防ぐため。
+    安全側に倒して古いとは判定しない(=通知する)。取りこぼしを防ぐため。
     """
     if not pub_date:
         return False
@@ -90,8 +90,28 @@ def is_stale(pub_date: str, stale_days: int, ctx: str) -> bool:
         logger.warn(ctx, f"pubDateのパースに失敗したため日付フィルタをスキップします: {pub_date!r} ({e})")
         return False
 
-    threshold = datetime.now(timezone.utc) - timedelta(days=stale_days)
-    return published_at < threshold
+    return published_at < datetime.now(timezone.utc) - threshold
+
+
+def is_stale(pub_date: str, stale_days: int, ctx: str) -> bool:
+    """
+    記事のpubDateが stale_days 日より古いかどうかを判定する。
+    「半年前の記事が急に出てくる」ような、あからさまに大昔の記事を弾くための
+    粗いフィルタ(日単位)。stale_days はフィードごとに feeds.json の
+    "stale_days" で上書きできる(指定が無ければ DEFAULT_STALE_ARTICLE_DAYS を使う)。
+    """
+    return is_older_than(pub_date, timedelta(days=stale_days), ctx)
+
+
+def is_too_old_for_fresh_notify(pub_date: str, fresh_hours: int, ctx: str) -> bool:
+    """
+    記事のpubDateが fresh_hours 時間より古いかどうかを判定する。
+    is_stale (日単位)よりもっと厳しく、「同日ではあるが配信から何時間も
+    経った記事がGoogle側の都合で急に出てくる」ケースを弾くための時間単位フィルタ。
+    fresh_hours はフィードごとに feeds.json の "fresh_hours" で上書きできる
+    (指定が無ければ DEFAULT_FRESH_HOURS を使う)。
+    """
+    return is_older_than(pub_date, timedelta(hours=fresh_hours), ctx)
 
 
 def process_feed(feed: dict) -> None:
@@ -101,6 +121,7 @@ def process_feed(feed: dict) -> None:
     webhook_env = feed["webhook_env"]
     max_per_run = feed.get("max_per_run", DEFAULT_MAX_NOTIFY_PER_RUN)
     stale_days = feed.get("stale_days", DEFAULT_STALE_ARTICLE_DAYS)
+    fresh_hours = feed.get("fresh_hours", DEFAULT_FRESH_HOURS)
     dedup_first_n = feed.get("dedup_first_n", DEFAULT_DEDUP_FIRST_N)
     dedup_followup_minutes = feed.get("dedup_followup_minutes", DEFAULT_DEDUP_FOLLOWUP_MINUTES)
     dedup_similarity_threshold = feed.get(
@@ -145,6 +166,27 @@ def process_feed(feed: dict) -> None:
             "通知せず既読化しました",
         )
     unread_new = fresh_unread
+
+    # 2.5.5 公開日が fresh_hours 時間より古い記事も「既読化のみ」で通知対象から外す
+    #       (stale_daysより厳しい時間単位のフィルタ。「同日ではあるが配信から
+    #       何時間も経った記事」がGoogle側の都合で急に出てくるケースへの対策)
+    too_old_ids = set()
+    fresh_unread2 = []
+    for a in unread_new:
+        if is_too_old_for_fresh_notify(a.pub_date, fresh_hours, ctx):
+            too_old_ids.add(a.id)
+        else:
+            fresh_unread2.append(a)
+
+    if too_old_ids:
+        read_ids = read_ids | too_old_ids
+        state_manager.save_read_ids(feed_id, read_ids)
+        logger.info(
+            ctx,
+            f"公開日が{fresh_hours}時間以上前の記事を{len(too_old_ids)}件、"
+            "通知せず既読化しました",
+        )
+    unread_new = fresh_unread2
 
     # 2.6 同一話題(複数社が同じ出来事を別記事で配信したもの)をクラスタリングし、
     #     最速N件だけそのまま通知、以降はこのプログラムの実行時刻(wall clock)基準で
