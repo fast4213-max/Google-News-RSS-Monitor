@@ -10,9 +10,9 @@ Discordに同じ話題の記事が延々と流れ続けるのを防ぐための�
   - 1つの話題について、最初の dedup_first_n 件（デフォルト2件、= 速報を最速で伝える2社分）は
     そのまま通知する。
   - それ以降は、前回その話題を通知した記事の時刻から dedup_followup_minutes 分
-    （デフォルト30分）以上経っている場合のみ「続報」として通知する
-    （ノイズになる「数分違いの同じ内容の記事」を間引く）。
-  - 30分経たないうちに来た同話題の記事は、既読化だけして通知しない（ノイズ削減の本体）。
+    （デフォルト60分）以上経っている場合のみ「続報」として通知する
+    （ノイズになる「数分〜数十分違いの同じ内容の記事」を間引く）。
+  - 60分経たないうちに来た同話題の記事は、既読化だけして通知しない（ノイズ削減の本体）。
   - クラスタ情報は state/clusters_<feed_id>.json に永続化する。
     dedup_cluster_max_age_hours より古いクラスタは自然に破棄され、
     無関係な後日の記事が誤って同じクラスタに混ざるのを防ぐ。
@@ -31,13 +31,13 @@ from email.utils import parsedate_to_datetime
 STATE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "state")
 
 DEFAULT_FIRST_N = 2                  # そのまま通知する「最速N件」
-DEFAULT_FOLLOWUP_MINUTES = 30        # これ以上経っていれば「続報」として通知
+DEFAULT_FOLLOWUP_MINUTES = 60        # これ以上経っていれば「続報」として通知
 DEFAULT_SIMILARITY_THRESHOLD = 0.28  # タイトル類似度(bigram Dice係数)がこれ以上なら同じ話題とみなす
 DEFAULT_CLUSTER_MAX_AGE_HOURS = 72  # これより古いクラスタは破棄する
 MAX_TITLES_PER_CLUSTER = 5          # クラスタ内に保持する正規化タイトルの上限(メモリ節約)
 MAX_CLUSTERS_PER_FEED = 300         # フィードあたりのクラスタ保持上限(古い順に間引く)
 
-FOLLOWUP_LABEL = "【続報】"
+FOLLOWUP_LABEL = "続報: "  # 記号(【】)なしのシンプルな接頭辞
 
 _LEADING_TAG_RE = re.compile(r"^[\s]*[【\[（(][^】\]）)]{0,20}[】\]）)]\s*")
 _STRIP_CHARS_RE = re.compile(r"[\s　、。,.!?！？「」『』\"'\-ー・:：]")
@@ -132,7 +132,7 @@ def classify_articles(
 
     articles: [{"id", "title", "link", "pub_date"}, ...] 古い順
     戻り値: (to_notify, skip_ids)
-      to_notify: 通知する記事のリスト(古い順、タイトルは続報の場合【続報】が付与される)
+      to_notify: 通知する記事のリスト(古い順、タイトルは続報の場合「続報: 」が付与される)
       skip_ids : 通知せず既読化だけする記事IDの集合(同話題の30分以内の重複)
 
     クラスタ状態は state/clusters_<feed_id>.json に保存される。

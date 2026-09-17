@@ -104,7 +104,7 @@ def test_diff_and_queue_logic():
 def test_dedup_clustering():
     """
     同じ出来事を複数社が別記事(別guid)で配信した場合に、
-    最速2件だけ通知され、以降(30分以内)は間引かれることを確認する。
+    最速2件だけ通知され、以降(60分以内)は間引かれることを確認する。
     """
     feed_id = "test_dedup_logic"
     path = dedup._clusters_path(feed_id)
@@ -139,19 +139,31 @@ def test_dedup_clustering():
         assert skip_ids == {"id2"}, f"間引かれる想定と違う: {skip_ids}"
         print("OK: test_dedup_clustering (同一話題の最速2件のみ通知)")
 
-        # 40分後の続報は通知され、【続報】が付与されること
+        # 40分後(60分未満)はまだ間引かれ、70分後(60分以上)は続報として通知されること
+        followup_too_soon = {
+            "id": "id_followup_soon",
+            "title": titles[0],
+            "link": "https://example.com/followup_soon",
+            "pub_date": (base + timedelta(minutes=40)).strftime("%a, %d %b %Y %H:%M:%S GMT"),
+        }
+        to_notify_soon, skip_ids_soon = dedup.classify_articles(
+            feed_id, [followup_too_soon], now=base + timedelta(minutes=40)
+        )
+        assert to_notify_soon == [] and skip_ids_soon == {"id_followup_soon"}
+        print("OK: test_dedup_clustering (60分未満はまだ間引かれる)")
+
         followup = {
             "id": "id_followup",
             "title": titles[0],
             "link": "https://example.com/followup",
-            "pub_date": (base + timedelta(minutes=40)).strftime("%a, %d %b %Y %H:%M:%S GMT"),
+            "pub_date": (base + timedelta(minutes=70)).strftime("%a, %d %b %Y %H:%M:%S GMT"),
         }
         to_notify2, skip_ids2 = dedup.classify_articles(
-            feed_id, [followup], now=base + timedelta(minutes=40)
+            feed_id, [followup], now=base + timedelta(minutes=70)
         )
         assert len(to_notify2) == 1 and to_notify2[0]["title"].startswith(dedup.FOLLOWUP_LABEL)
         assert skip_ids2 == set()
-        print("OK: test_dedup_clustering (30分経過後は続報として通知)")
+        print("OK: test_dedup_clustering (60分経過後は続報として通知)")
     finally:
         if os.path.exists(path):
             os.remove(path)
