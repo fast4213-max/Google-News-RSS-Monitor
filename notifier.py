@@ -33,6 +33,8 @@ USER_AGENT = (
     "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 )
 
+SEPARATOR = "-" * 20  # 記事と記事の境目をひと目でわかりやすくする区切り線
+
 
 def _resolve_webhook_url(webhook_env: str) -> str:
     """
@@ -78,6 +80,7 @@ def send_article(webhook_env: str, feed_name: str, title: str, link: str) -> Non
     指定フォーマットで1記事を、指定のWebhook(=そのフィード専用チャンネル)に通知する。
       <title>
       <link>
+      --------------------
 
     フィード名の見出し(【○○】)は表示しない。チャンネル自体がフィードごとに
     分かれているため、メッセージ内で改めてフィード名を出す必要がないため。
@@ -87,8 +90,11 @@ def send_article(webhook_env: str, feed_name: str, title: str, link: str) -> Non
     こうするとリンクはクリック可能なまま、Googleニュース等の埋め込みプレビュー
     (サムネイル付きカード)が表示されなくなり、タイトルとURLだけのシンプルな
     通知になる。
+
+    末尾に区切り線を入れて、複数の通知が連続で流れたときに1記事ずつの
+    境目がひと目でわかるようにしている。
     """
-    content = f"{title}\n<{link}>"
+    content = f"{title}\n<{link}>\n{SEPARATOR}"
     _post(webhook_env, content)
     logger.info(_CONTEXT, f"通知送信OK ({webhook_env}): {title}")
 
