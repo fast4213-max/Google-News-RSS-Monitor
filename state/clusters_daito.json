@@ -63,6 +63,17 @@
         "日テレNEWS NNN": "Fri, 18 Sep 2026 03:07:00 GMT",
         "Yahoo!ニュース": "Fri, 18 Sep 2026 03:07:00 GMT"
       }
+    },
+    {
+      "titles": [
+        "大東市刺殺元夫宅で殺意のメモ(2026年9月18日掲載)"
+      ],
+      "notified_count": 1,
+      "unknown_source_count": 0,
+      "last_notified_at": "2026-09-18T06:10:33.514726+00:00",
+      "sources": {
+        "ライブドアニュース": "Fri, 18 Sep 2026 02:52:22 GMT"
+      }
     }
   ]
 }
