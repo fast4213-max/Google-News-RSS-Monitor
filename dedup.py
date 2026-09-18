@@ -59,7 +59,7 @@ STATE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "state")
 
 DEFAULT_FIRST_N = 3                  # 配信元が特定できた記事について、最速で無条件に通知する件数
 DEFAULT_UNKNOWN_SOURCE_LIMIT = 3     # 配信元が特定できない記事について、最速で無条件に通知する件数(別枠)
-DEFAULT_SIMILARITY_THRESHOLD = 0.28  # タイトル類似度(bigram Dice係数)がこれ以上なら同じ話題とみなす
+DEFAULT_SIMILARITY_THRESHOLD = 0.17  # タイトル類似度(bigram Dice係数)がこれ以上なら同じ話題とみなす
 DEFAULT_CLUSTER_MAX_AGE_HOURS = 72   # これより古いクラスタは破棄する
 MAX_TITLES_PER_CLUSTER = 5           # クラスタ内に保持する正規化タイトルの上限(メモリ節約)
 MAX_SOURCES_PER_CLUSTER = 20         # クラスタ内に保持する配信元の上限(メモリ節約)

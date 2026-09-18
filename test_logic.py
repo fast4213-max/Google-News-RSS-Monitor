@@ -186,6 +186,58 @@ def test_dedup_clustering():
             os.remove(path)
 
 
+def test_similarity_threshold_catches_reangled_followup():
+    """
+    実際にあった事例の再現テスト: 同じ事件について「メモ・ノートが見つかった」
+    という新しい切り口の続報が、言い回しの違いから別の新しい話題として
+    誤判定されてしまっていた(閾値0.28では類似度0.34未満で別クラスタ扱いになる)。
+    閾値を0.17まで下げたことで、これらが正しく同じクラスタに分類されることを確認する。
+    """
+    feed_id = "test_similarity_reangled"
+    path = dedup._clusters_path(feed_id)
+    if os.path.exists(path):
+        os.remove(path)
+
+    from datetime import datetime, timedelta, timezone
+
+    base = datetime(2026, 9, 18, 3, 0, tzinfo=timezone.utc)
+
+    def article(i, title, minutes):
+        return {
+            "id": f"r{i}",
+            "title": title,
+            "link": f"https://example.com/r{i}",
+            "pub_date": (base + timedelta(minutes=minutes)).strftime("%a, %d %b %Y %H:%M:%S GMT"),
+        }
+
+    try:
+        seed = [
+            article(0, "女性従業員は搬送先の病院で死亡 スパで従業員が刃物で刺された事件 - Infoseek", 0),
+            article(1, "スパで元妻を包丁で刺したか 男(80)を現行犯逮捕 元妻はその後死亡 - A新聞", 1),
+            article(2, "スパで刺された女性店員(66)死亡 80歳元夫を現行犯逮捕 - B新聞", 2),
+        ]
+        dedup.classify_articles(feed_id, seed, now=base, first_n=3)
+
+        # 「メモ・ノートが見つかった」という新しい切り口の続報(実際にあった事例)。
+        # 配信元はC新聞(初見)なので、続報通知はされない(既知配信元ルール)が、
+        # 「同じクラスタに分類される」こと自体をここでは検証したいので、
+        # 直接クラスタとの類似度を確認する。
+        reangled = dedup.normalize_title(
+            "事件前に「あいつを殺す」とのメモ見つかる スーパーで元妻を刺殺 逮捕の男の自宅で - C新聞"
+        )
+        clusters = dedup.load_clusters(feed_id)
+        best_ratio = max(
+            dedup._similarity(reangled, t) for c in clusters for t in c["titles"]
+        )
+        assert best_ratio >= dedup.DEFAULT_SIMILARITY_THRESHOLD, (
+            f"切り口の違う続報が同じクラスタと判定されない: best_ratio={best_ratio}"
+        )
+        print("OK: test_similarity_threshold (切り口の違う続報も同じクラスタと判定される)")
+    finally:
+        if os.path.exists(path):
+            os.remove(path)
+
+
 def test_unknown_source_has_separate_quota():
     """
     配信元が特定できない記事(タイトルに「- 媒体名」表記が無い)は、配信元が
@@ -414,6 +466,7 @@ if __name__ == "__main__":
     test_parse_not_xml_raises()
     test_diff_and_queue_logic()
     test_dedup_clustering()
+    test_similarity_threshold_catches_reangled_followup()
     test_unknown_source_has_separate_quota()
     test_old_article_only_skipped_when_topic_already_notified()
     test_read_ids_order_is_preserved()
