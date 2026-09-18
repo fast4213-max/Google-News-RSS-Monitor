@@ -270,6 +270,42 @@ def test_read_ids_order_is_preserved():
             os.remove(path)
 
 
+def test_load_queue_skips_malformed_items():
+    """
+    queue内に id/title/link を欠いた壊れた要素があっても、
+    main.py 側で KeyError にならず、正常な要素だけ読み込まれることを確認する。
+    (クラスタstateで実際に起きたKeyError事故と同種の防御)
+    """
+    import json
+
+    import state_manager
+
+    feed_id = "test_queue_malformed"
+    path = state_manager._queue_path(feed_id)
+    try:
+        os.makedirs(state_manager.STATE_DIR, exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(
+                {
+                    "items": [
+                        {"id": "ok1", "title": "正常な記事", "link": "https://example.com/1", "pub_date": ""},
+                        {"title": "idが無い記事", "link": "https://example.com/2"},
+                        {"id": "ok2", "title": "pub_dateが無い記事", "link": "https://example.com/3"},
+                        "壊れた文字列要素",
+                    ]
+                },
+                f,
+                ensure_ascii=False,
+            )
+        items = state_manager.load_queue(feed_id)
+        assert {i["id"] for i in items} == {"ok1", "ok2"}, items
+        assert all("pub_date" in i for i in items)
+        print("OK: test_load_queue_skips_malformed_items (壊れた要素は読み飛ばしクラッシュしない)")
+    finally:
+        if os.path.exists(path):
+            os.remove(path)
+
+
 def test_rss_skips_broken_item_but_keeps_rest():
     """title/linkが欠けたitemが1件あっても、残りの記事は処理されること。"""
     rss_with_one_broken = """<?xml version="1.0" encoding="UTF-8"?>
@@ -317,6 +353,7 @@ if __name__ == "__main__":
     test_dedup_clustering()
     test_old_article_only_skipped_when_topic_already_notified()
     test_read_ids_order_is_preserved()
+    test_load_queue_skips_malformed_items()
     test_rss_skips_broken_item_but_keeps_rest()
     test_fresh_hours_filter()
     print("\n全テスト成功")

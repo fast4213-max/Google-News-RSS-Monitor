@@ -87,9 +87,35 @@ def append_read_ids(feed_id: str, new_ids: Iterable[str]) -> None:
 
 
 def load_queue(feed_id: str) -> list[dict]:
-    """次回に持ち越された未通知記事のリストを読み込む。"""
+    """
+    次回に持ち越された未通知記事のリストを読み込む。
+
+    id/title/link を欠いた要素(手で壊してしまった場合や、将来のスキーマ変更で
+    形式が変わった場合)は読み飛ばす。ここで例外を投げると main.py 全体が
+    落ちてstateのコミットが止まり、以後ずっと未読が溜まり続ける事故になるため
+    (実際にクラスタstateで同種の事故が起きた)、クラスタ読み込みと同じ方針で防御的にする。
+    """
     data = _load_json(_queue_path(feed_id), {"items": []})
-    return data.get("items", [])
+    raw_items = data.get("items", [])
+    if not isinstance(raw_items, list):
+        return []
+    items = []
+    for item in raw_items:
+        if (
+            isinstance(item, dict)
+            and isinstance(item.get("id"), str)
+            and isinstance(item.get("title"), str)
+            and isinstance(item.get("link"), str)
+        ):
+            items.append(
+                {
+                    "id": item["id"],
+                    "title": item["title"],
+                    "link": item["link"],
+                    "pub_date": item.get("pub_date") if isinstance(item.get("pub_date"), str) else "",
+                }
+            )
+    return items
 
 
 def save_queue(feed_id: str, items: list[dict]) -> None:
