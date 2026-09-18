@@ -7,9 +7,14 @@ Discordに同じ話題の記事が延々と流れ続けるのを防ぐための�
   - Googleニュースの検索RSSは、同じ出来事について各社(産経/毎日/Yahoo!ニュース等)が
     それぞれ別記事(別guid)を出すため、そのまま通知すると同じ話題が何件も並んでしまう。
   - タイトルを正規化して類似度を比較し、「同じ話題」とみなせる記事をクラスタにまとめる。
-  - 1つの話題について、**最初の dedup_first_n 件（デフォルト3件、最速で報じた3社分）は
-    そのまま通知する**。このとき各記事の「配信元(タイトル末尾の " - 媒体名")」と
-    「pubDate」をクラスタに記録しておく。
+  - 1つの話題について、**配信元が特定できた記事は最初の dedup_first_n 件
+    （デフォルト3件、最速で報じた3社分）をそのまま通知する**。このとき各記事の
+    「配信元(タイトル末尾の " - 媒体名")」と「pubDate」をクラスタに記録しておく。
+      - 配信元の枠(dedup_first_n)は、**配信元が特定できた記事だけ**でカウントする。
+        配信元が特定できない記事は別枠(dedup_unknown_source_limit、デフォルト3件)で
+        カウントする。こうすることで、例えば1件目のタイトルが配信元不明な形式でも、
+        それに枠を1つ消費されず「配信元が分かる記事を3件」きちんと確保できる
+        (続報判定に使える配信元をなるべく多く残すため)。
   - 4件目以降(続報)は、**同じ配信元が同じ話題について、前回より新しいpubDateで
     改めて記事を出した場合にだけ**続報として通知する。
       - 例: 最速3件が「MBSニュース・TBS NEWS DIG・Yahoo!ニュース」だったとして、
@@ -22,6 +27,9 @@ Discordに同じ話題の記事が延々と流れ続けるのを防ぐための�
       - 逆に、最速3件に含まれていない**初見の配信元**が4件目以降に出てきた場合は、
         「本当に内容が更新された記事なのか、単なる他社の後追い(内容は同じ)なのか」を
         区別する手段が無いため、安全側に倒して通知しない。
+      - 配信元が特定できない記事は、dedup_unknown_source_limit の枠が埋まって
+        いない間はそのまま通知し、埋まった後はそれ以上通知しない(続報判定の
+        しようが無いため)。
   - 「古い記事(old_ids)」の扱い:
     配信から fresh_hours 時間以上経った記事は、Googleニュースが後から
     掘り起こしてきただけのことが多い。
@@ -49,7 +57,8 @@ from email.utils import parsedate_to_datetime
 
 STATE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "state")
 
-DEFAULT_FIRST_N = 3                  # 最速で無条件に通知する件数
+DEFAULT_FIRST_N = 3                  # 配信元が特定できた記事について、最速で無条件に通知する件数
+DEFAULT_UNKNOWN_SOURCE_LIMIT = 3     # 配信元が特定できない記事について、最速で無条件に通知する件数(別枠)
 DEFAULT_SIMILARITY_THRESHOLD = 0.28  # タイトル類似度(bigram Dice係数)がこれ以上なら同じ話題とみなす
 DEFAULT_CLUSTER_MAX_AGE_HOURS = 72   # これより古いクラスタは破棄する
 MAX_TITLES_PER_CLUSTER = 5           # クラスタ内に保持する正規化タイトルの上限(メモリ節約)
@@ -94,6 +103,7 @@ def load_clusters(feed_id: str) -> list[dict]:
         if not titles:
             continue
         notified_count = c.get("notified_count")
+        unknown_source_count = c.get("unknown_source_count")
         raw_sources = c.get("sources", {})
         sources = (
             {k: v for k, v in raw_sources.items() if isinstance(k, str) and isinstance(v, str)}
@@ -104,6 +114,9 @@ def load_clusters(feed_id: str) -> list[dict]:
             {
                 "titles": titles[-MAX_TITLES_PER_CLUSTER:],
                 "notified_count": notified_count if isinstance(notified_count, int) else 0,
+                "unknown_source_count": (
+                    unknown_source_count if isinstance(unknown_source_count, int) else 0
+                ),
                 "last_notified_at": c.get("last_notified_at") or "",
                 "sources": sources,
             }
@@ -205,6 +218,7 @@ def classify_articles(
     articles: list[dict],
     now: datetime | None = None,
     first_n: int = DEFAULT_FIRST_N,
+    unknown_source_limit: int = DEFAULT_UNKNOWN_SOURCE_LIMIT,
     similarity_threshold: float = DEFAULT_SIMILARITY_THRESHOLD,
     cluster_max_age_hours: int = DEFAULT_CLUSTER_MAX_AGE_HOURS,
     old_ids: set[str] | None = None,
@@ -221,13 +235,18 @@ def classify_articles(
     通知するかどうかの判定:
       - 既存クラスタにマッチした(=すでに通知済みの話題)
           - old_ids に入っている(古い記事) → 通知しない
-            (「初回3件」の枠を古い後追い記事が不正に埋めるのを防ぐため、
-            first_n未満でもここで弾く)
-          - まだ first_n 件に達していない → そのまま通知(最速枠)
-          - first_n 件に達している(続報の可能性) →
-            「同じ配信元が過去にこの話題で通知されており、かつ今回のpubDateが
-            その配信元の前回pubDateより新しい」場合にだけ続報として通知する。
-            配信元が不明、または初見の配信元の場合は通知しない。
+            (「初回枠」を古い後追い記事が不正に埋めるのを防ぐため、
+            枠が埋まっていなくてもここで弾く)
+          - 配信元が特定できる記事:
+              - まだ first_n 件に達していない → そのまま通知(最速枠)。
+                この枠は配信元が特定できた記事だけでカウントする。
+              - first_n 件に達している(続報の可能性) →
+                「同じ配信元が過去にこの話題で通知されており、かつ今回のpubDateが
+                その配信元の前回pubDateより新しい」場合にだけ続報として通知する。
+          - 配信元が特定できない記事:
+              - まだ unknown_source_limit 件に達していない(こちらは配信元が
+                特定できた記事とは別枠でカウント) → そのまま通知
+              - 達している → 続報判定のしようが無いため通知しない
       - どのクラスタにもマッチしない(=初めての話題)
           → 古い記事であっても通知する(見逃しを防ぐため)
 
@@ -267,15 +286,20 @@ def classify_articles(
                 continue
 
             notify = False
-            if best_cluster["notified_count"] < first_n:
-                # まだ最速枠が埋まっていない
-                notify = True
-            elif source:
-                # 続報判定: 同じ配信元が、前回より新しいpubDateで改めて記事を出したか
-                prev_pub_str = best_cluster["sources"].get(source)
-                article_pub = _parse_pub_date(a.get("pub_date", ""))
-                prev_pub = _parse_pub_date(prev_pub_str) if prev_pub_str else None
-                if prev_pub is not None and article_pub is not None and article_pub > prev_pub:
+            if source:
+                if best_cluster["notified_count"] < first_n:
+                    # まだ「配信元が分かる記事」の最速枠が埋まっていない
+                    notify = True
+                else:
+                    # 続報判定: 同じ配信元が、前回より新しいpubDateで改めて記事を出したか
+                    prev_pub_str = best_cluster["sources"].get(source)
+                    article_pub = _parse_pub_date(a.get("pub_date", ""))
+                    prev_pub = _parse_pub_date(prev_pub_str) if prev_pub_str else None
+                    if prev_pub is not None and article_pub is not None and article_pub > prev_pub:
+                        notify = True
+            else:
+                if best_cluster["unknown_source_count"] < unknown_source_limit:
+                    # 配信元不明な記事の最速枠(配信元が分かる記事とは別カウント)
                     notify = True
 
             if not notify:
@@ -283,20 +307,23 @@ def classify_articles(
                 continue
 
             to_notify.append(dict(a))
-            best_cluster["notified_count"] += 1
             best_cluster["last_notified_at"] = now.isoformat()
             best_cluster["titles"].append(norm)
             best_cluster["titles"] = best_cluster["titles"][-MAX_TITLES_PER_CLUSTER:]
             if source:
+                best_cluster["notified_count"] += 1
                 best_cluster["sources"][source] = a.get("pub_date", "")
                 if len(best_cluster["sources"]) > MAX_SOURCES_PER_CLUSTER:
                     # 古い配信元から間引く(dictは挿入順を保持するのでpopitem(last=False)相当)
                     oldest_source = next(iter(best_cluster["sources"]))
                     del best_cluster["sources"][oldest_source]
+            else:
+                best_cluster["unknown_source_count"] += 1
         else:
             new_cluster = {
                 "titles": [norm],
-                "notified_count": 1,
+                "notified_count": 1 if source else 0,
+                "unknown_source_count": 0 if source else 1,
                 "last_notified_at": now.isoformat(),
                 "sources": {source: a.get("pub_date", "")} if source else {},
             }

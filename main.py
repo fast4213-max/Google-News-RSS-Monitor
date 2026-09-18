@@ -42,9 +42,10 @@ DEFAULT_FRESH_HOURS = 3          # 記事の公開日がこれより古ければ
 # (例: 話題が広く更新の速い「中東情勢」だけ上限を増やす、期間を短くする、など)
 
 # 同一話題(複数社が同じ出来事を別記事で配信したもの)をまとめるクラスタリングのデフォルト値。
-# いずれも feeds.json 側で "dedup_first_n" / "dedup_similarity_threshold" を
-# 指定すればフィードごとに上書きできる。
+# いずれも feeds.json 側で "dedup_first_n" / "dedup_unknown_source_limit" /
+# "dedup_similarity_threshold" を指定すればフィードごとに上書きできる。
 DEFAULT_DEDUP_FIRST_N = dedup.DEFAULT_FIRST_N
+DEFAULT_DEDUP_UNKNOWN_SOURCE_LIMIT = dedup.DEFAULT_UNKNOWN_SOURCE_LIMIT
 DEFAULT_DEDUP_SIMILARITY_THRESHOLD = dedup.DEFAULT_SIMILARITY_THRESHOLD
 
 FEEDS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "feeds.json")
@@ -67,6 +68,7 @@ def load_feeds() -> list[dict]:
             "stale_days",
             "fresh_hours",
             "dedup_first_n",
+            "dedup_unknown_source_limit",
         ):
             if optional_key in feed and not isinstance(feed[optional_key], int):
                 raise RuntimeError(
@@ -136,6 +138,9 @@ def process_feed(feed: dict) -> None:
     stale_days = feed.get("stale_days", DEFAULT_STALE_ARTICLE_DAYS)
     fresh_hours = feed.get("fresh_hours", DEFAULT_FRESH_HOURS)
     dedup_first_n = feed.get("dedup_first_n", DEFAULT_DEDUP_FIRST_N)
+    dedup_unknown_source_limit = feed.get(
+        "dedup_unknown_source_limit", DEFAULT_DEDUP_UNKNOWN_SOURCE_LIMIT
+    )
     dedup_similarity_threshold = feed.get(
         "dedup_similarity_threshold", DEFAULT_DEDUP_SIMILARITY_THRESHOLD
     )
@@ -190,6 +195,7 @@ def process_feed(feed: dict) -> None:
         feed_id,
         unread_new_dicts_raw,
         first_n=dedup_first_n,
+        unknown_source_limit=dedup_unknown_source_limit,
         similarity_threshold=dedup_similarity_threshold,
         old_ids=old_ids,
     )

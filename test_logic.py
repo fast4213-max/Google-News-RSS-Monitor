@@ -186,6 +186,69 @@ def test_dedup_clustering():
             os.remove(path)
 
 
+def test_unknown_source_has_separate_quota():
+    """
+    配信元が特定できない記事(タイトルに「- 媒体名」表記が無い)は、配信元が
+    特定できる記事の最速枠(dedup_first_n)とは別の枠(dedup_unknown_source_limit)で
+    カウントされることを確認する。
+
+    1件目が配信元不明でも、それによって「配信元が分かる記事の最速3件」の
+    確保が妨げられない(=結果的に配信元不明1件+配信元あり3件=4件通知される)。
+    """
+    feed_id = "test_unknown_source_quota"
+    path = dedup._clusters_path(feed_id)
+    if os.path.exists(path):
+        os.remove(path)
+
+    from datetime import datetime, timedelta, timezone
+
+    base = datetime(2026, 9, 18, 0, 0, tzinfo=timezone.utc)
+
+    def article(i, title, minutes):
+        return {
+            "id": f"u{i}",
+            "title": title,
+            "link": f"https://example.com/u{i}",
+            "pub_date": (base + timedelta(minutes=minutes)).strftime("%a, %d %b %Y %H:%M:%S GMT"),
+        }
+
+    try:
+        # 1件目: 配信元不明(「- 媒体名」表記なし)、2〜4件目: 配信元あり
+        articles = [
+            article(0, "スーパーで男性刺される 大東市", 0),
+            article(1, "スーパーで男性刺される 大東市 - A新聞", 1),
+            article(2, "スーパーで男性刺される 大東市 - B新聞", 2),
+            article(3, "スーパーで男性刺される 大東市 - C新聞", 3),
+        ]
+        to_notify, skip_ids = dedup.classify_articles(feed_id, articles, now=base)
+        notified_ids = {a["id"] for a in to_notify}
+        assert notified_ids == {"u0", "u1", "u2", "u3"}, notified_ids
+        assert skip_ids == set()
+        print("OK: test_unknown_source_quota (配信元不明1件が最速3件の枠を消費しない)")
+
+        # 5件目: さらに配信元不明の記事(unknown_source_limit=3のデフォルトなら、
+        # まだ1件しか使っていないので通知される)
+        more_unknown = article(4, "スーパーで男性刺される 大東市 続報", 4)
+        to_notify2, skip_ids2 = dedup.classify_articles(
+            feed_id, [more_unknown], now=base + timedelta(minutes=4)
+        )
+        assert {a["id"] for a in to_notify2} == {"u4"}
+        print("OK: test_unknown_source_quota (配信元不明の別枠がまだ余っていれば通知される)")
+
+        # 6,7件目: 配信元不明をさらに2件追加 → 3件使い切ったところで打ち止め
+        unknown6 = article(5, "スーパーで男性刺される 大東市 続報2", 5)
+        unknown7 = article(6, "スーパーで男性刺される 大東市 続報3", 6)
+        to_notify3, skip_ids3 = dedup.classify_articles(
+            feed_id, [unknown6, unknown7], now=base + timedelta(minutes=6)
+        )
+        assert {a["id"] for a in to_notify3} == {"u5"}, to_notify3
+        assert skip_ids3 == {"u6"}
+        print("OK: test_unknown_source_quota (配信元不明の別枠も上限に達すれば間引かれる)")
+    finally:
+        if os.path.exists(path):
+            os.remove(path)
+
+
 def test_old_article_only_skipped_when_topic_already_notified():
     """
     公開から時間が経った記事(old_ids)の扱い:
@@ -351,6 +414,7 @@ if __name__ == "__main__":
     test_parse_not_xml_raises()
     test_diff_and_queue_logic()
     test_dedup_clustering()
+    test_unknown_source_has_separate_quota()
     test_old_article_only_skipped_when_topic_already_notified()
     test_read_ids_order_is_preserved()
     test_load_queue_skips_malformed_items()
