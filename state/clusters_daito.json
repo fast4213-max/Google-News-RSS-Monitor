@@ -29,6 +29,16 @@
       "notified_count": 1,
       "last_notified_at": "2026-09-17T23:10:34.443290+00:00",
       "sources": {}
+    },
+    {
+      "titles": [
+        "大東市一棟マンション"
+      ],
+      "notified_count": 1,
+      "last_notified_at": "2026-09-18T00:35:07.954684+00:00",
+      "sources": {
+        "rakumachi.jp": "Tue, 15 Sep 2026 05:26:44 GMT"
+      }
     }
   ]
 }
