@@ -46,17 +46,6 @@
     },
     {
       "titles": [
-        "夏の疲れが残っている今だからこそ心と身体を整え心地よくリフレッシュ"
-      ],
-      "notified_count": 1,
-      "unknown_source_count": 0,
-      "last_notified_at": "2026-09-18T23:10:34.005444+00:00",
-      "sources": {
-        "地域ニュースサイト号外NET": "Fri, 18 Sep 2026 22:21:58 GMT"
-      }
-    },
-    {
-      "titles": [
         "大東市寺川５丁目付近で声かけ９月１８日"
       ],
       "notified_count": 1,
@@ -86,6 +75,17 @@
       "last_notified_at": "2026-09-19T23:10:33.447799+00:00",
       "sources": {
         "地域ニュースサイト号外NET": "Sat, 19 Sep 2026 22:21:40 GMT"
+      }
+    },
+    {
+      "titles": [
+        "9月21日は何の日ポップタウン住道オペラパクで9月23日には地域包括フェスティバルを開催"
+      ],
+      "notified_count": 1,
+      "unknown_source_count": 0,
+      "last_notified_at": "2026-09-21T23:10:37.650745+00:00",
+      "sources": {
+        "地域ニュースサイト号外NET": "Mon, 21 Sep 2026 22:21:46 GMT"
       }
     }
   ]
