@@ -11,9 +11,15 @@
   {
     "id": "saigai",
     "name": "自然災害",
-    "url": "https://news.google.com/rss/search?q=%E5%9C%B0%E9%9C%87%20OR%20%E6%B4%A5%E6%B3%A2%20OR%20%E5%8F%B0%E9%A2%A8%20OR%20%E5%A4%A7%E9%9B%A8%20OR%20%E6%B4%AA%E6%B0%B4%20OR%20%E5%9C%9F%E7%A0%82%E7%81%BD%E5%AE%B3%20OR%20%E5%99%B4%E7%81%AB%20OR%20%E7%89%B9%E5%88%A5%E8%AD%A6%E5%A0%B1%20OR%20%E9%81%BF%E9%9B%A3%E6%8C%87%E7%A4%BA&hl=ja&gl=JP&ceid=JP:ja",
+    "url": "https://news.google.com/rss/search?q=%28%E5%A4%A7%E9%98%AA%20OR%20%E5%A4%A7%E9%98%AA%E5%BA%9C%20OR%20%E8%BF%91%E7%95%BF%20OR%20%E9%96%A2%E8%A5%BF%29%20AND%20%28%E5%9C%B0%E9%9C%87%20OR%20%E6%B4%A5%E6%B3%A2%20OR%20%E5%8F%B0%E9%A2%A8%20OR%20%E5%A4%A7%E9%9B%A8%20OR%20%E6%B4%AA%E6%B0%B4%20OR%20%E5%9C%9F%E7%A0%82%E7%81%BD%E5%AE%B3%20OR%20%E5%99%B4%E7%81%AB%20OR%20%E7%89%B9%E5%88%A5%E8%AD%A6%E5%A0%B1%20OR%20%E9%81%BF%E9%9B%A3%E6%8C%87%E7%A4%BA%29&hl=ja&gl=JP&ceid=JP:ja",
     "webhook_env": "DISCORD_WEBHOOK_URL_SAIGAI",
     "max_per_run": 100,
-    "dedup_first_n": 0
+    "dedup_first_n": 0,
+    "dedup_ignore_words": [
+      "大阪府",
+      "大阪",
+      "近畿",
+      "関西"
+    ]
   }
 ]
