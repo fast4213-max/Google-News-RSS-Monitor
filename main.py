@@ -8,6 +8,8 @@
   3. 前回までの既読ID (state/read_<id>.json) と持ち越しキュー (state/queue_<id>.json) を読み、
      そのどちらにも入っていない記事を「今回の未読」として抽出
      (キューの記事は前回「通知する」と判定済みなので、以降の日付/重複判定にはかけない)
+  3.4 exclude_words に該当する記事は、既読化のみして通知しない
+      (そのフィードでは扱わない話題。別フィード/別チャンネルに任せる場合に使う)
   3.5 公開日が stale_days 日より古い記事は、既読化のみして通知しない
       (Googleニュースの検索結果に急に大昔の記事が紛れ込むことがあるため)
   3.6 公開日が fresh_hours 時間より古い記事は「古い記事」として印を付け、
@@ -94,6 +96,13 @@ def load_feeds() -> list[dict]:
                 raise RuntimeError(
                     f"feeds.json の '{threshold_key}' は0〜1の数値で指定してください: {feed}"
                 )
+        exclude_words = feed.get("exclude_words")
+        if exclude_words is not None and not (
+            isinstance(exclude_words, list) and all(isinstance(w, str) for w in exclude_words)
+        ):
+            raise RuntimeError(
+                f"feeds.json の 'exclude_words' は文字列の配列で指定してください: {feed}"
+            )
         ignore_words = feed.get("dedup_ignore_words")
         if ignore_words is not None and not (
             isinstance(ignore_words, list) and all(isinstance(w, str) for w in ignore_words)
@@ -175,6 +184,10 @@ def process_feed(feed: dict) -> None:
     dedup_same_source_threshold = feed.get(
         "dedup_same_source_threshold", DEFAULT_DEDUP_SAME_SOURCE_THRESHOLD
     )
+    # タイトルにこれらの語を含む記事は、このフィードでは通知しない(既読化のみ)。
+    # 「大東市の一般ニュース」と「大東市の災害情報」のように、同じ記事を拾う
+    # フィードが複数ある場合に、チャンネルごとの住み分けをするために使う。
+    exclude_words = list(feed.get("exclude_words", []))
     ctx = f"feed:{feed_id}"
 
     # 1. RSS取得・パース
@@ -222,6 +235,24 @@ def process_feed(feed: dict) -> None:
             "通知せず既読化しました",
         )
     unread_new = [a for a in unread_new if a.id not in read_ids]
+
+    # 2.55 exclude_words にマッチする記事は、このフィードでは通知せず既読化だけする。
+    #      同じ記事を別のフィード(別チャンネル)が拾う前提の住み分け用で、
+    #      例えば「大東市」フィードから災害・警報系の記事を外し、
+    #      それらは「大東市の災害情報」フィード(自然災害チャンネル)に任せる、という使い方をする。
+    #      ここで既読化しておかないと、毎回同じ記事を判定し続けることになる。
+    if exclude_words:
+        excluded_ids = [
+            a.id for a in unread_new if any(w in a.title for w in exclude_words)
+        ]
+        if excluded_ids:
+            state_manager.append_read_ids(feed_id, excluded_ids)
+            read_ids = read_ids | set(excluded_ids)
+            logger.info(
+                ctx,
+                f"exclude_words に該当する記事を{len(excluded_ids)}件、通知せず既読化しました",
+            )
+        unread_new = [a for a in unread_new if a.id not in read_ids]
 
     # 2.6 同一話題(複数社が同じ出来事を別記事で配信したもの)をクラスタリングして間引く。
     #     - すでに通知済みの話題 … 最速 dedup_first_n 件まではそのまま通知。それ以降は、

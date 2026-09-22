@@ -1096,6 +1096,80 @@ def test_rss_retries_on_temporary_failure():
         rss.time.sleep = original_sleep
 
 
+def test_exclude_words_skips_articles_but_marks_them_read():
+    """
+    exclude_words に該当する記事は通知されず、既読化だけされることを確認する。
+    (「大東市」チャンネルから災害・警報系を外し、自然災害チャンネルに任せる用途)
+    毎回同じ記事を判定し直さないよう、既読化されることまで確認する。
+    """
+    from datetime import datetime, timezone
+    from email.utils import format_datetime
+
+    import notifier
+    import state_manager
+
+    feed_id = "test_exclude_words"
+    feed = {
+        "id": feed_id,
+        "name": "大東市",
+        "url": "https://example.invalid/rss",
+        "webhook_env": "DUMMY_WEBHOOK_ENV",
+        "exclude_words": ["大雨", "警報", "土砂災害"],
+    }
+    paths = [
+        state_manager._read_path(feed_id),
+        state_manager._queue_path(feed_id),
+        dedup._clusters_path(feed_id),
+    ]
+
+    pub = format_datetime(datetime.now(timezone.utc))
+    articles = [
+        rss.Article(id="e3", title="大東市で新しい公園がオープン - C新聞", link="https://example.com/e3", pub_date=pub),
+        rss.Article(id="e2", title="【レベル４土砂災害危険警報】大阪府・大東市に発表 - B新聞", link="https://example.com/e2", pub_date=pub),
+        rss.Article(id="e1", title="【レベル３大雨警報】大阪府・大東市に発表 - A新聞", link="https://example.com/e1", pub_date=pub),
+    ]
+
+    sent_ids = []
+    original_fetch = rss.fetch_articles
+    original_send = notifier.send_articles
+    original_error = notifier.send_error
+
+    def fake_send_articles(webhook_env, feed_name, arts, max_count):
+        delivered = arts[:max_count]
+        sent_ids.extend(a["id"] for a in delivered)
+        return delivered
+
+    try:
+        for p_ in paths:
+            if os.path.exists(p_):
+                os.remove(p_)
+        rss.fetch_articles = lambda url: articles
+        notifier.send_articles = fake_send_articles
+        notifier.send_error = lambda *a, **k: None
+
+        main.process_feed(feed)
+        assert sent_ids == ["e3"], f"災害系が通知されてしまった: {sent_ids}"
+        # 除外した記事も既読化されていること(毎回判定し直さないため)
+        assert set(state_manager.load_read_ids(feed_id)) == {"e1", "e2", "e3"}
+        print("OK: test_exclude_words (該当記事は通知されず既読化される)")
+
+        # exclude_words を指定しなければ同じ記事が通知されること(除外が効いている証明)
+        for p_ in paths:
+            if os.path.exists(p_):
+                os.remove(p_)
+        sent_ids.clear()
+        main.process_feed({k: v for k, v in feed.items() if k != "exclude_words"})
+        assert set(sent_ids) == {"e1", "e2", "e3"}, sent_ids
+        print("OK: test_exclude_words (指定しなければ従来どおり通知される)")
+    finally:
+        rss.fetch_articles = original_fetch
+        notifier.send_articles = original_send
+        notifier.send_error = original_error
+        for p_ in paths:
+            if os.path.exists(p_):
+                os.remove(p_)
+
+
 if __name__ == "__main__":
     test_parse_success()
     test_parse_no_channel_raises()
@@ -1124,4 +1198,5 @@ if __name__ == "__main__":
     test_first_n_zero_notifies_every_article_in_topic()
     test_feeds_json_is_valid()
     test_rss_retries_on_temporary_failure()
+    test_exclude_words_skips_articles_but_marks_them_read()
     print("\n全テスト成功")

@@ -6,6 +6,18 @@
     "webhook_env": "DISCORD_WEBHOOK_URL_DAITO",
     "dedup_ignore_words": [
       "大阪府"
+    ],
+    "exclude_words": [
+      "大雨",
+      "警報",
+      "避難指示",
+      "高齢者等避難",
+      "土砂災害",
+      "浸水",
+      "氾濫",
+      "地震",
+      "台風",
+      "津波"
     ]
   },
   {
@@ -25,7 +37,7 @@
   {
     "id": "saigai_daito",
     "name": "大東市の災害情報",
-    "url": "https://news.google.com/rss/search?q=%E5%A4%A7%E6%9D%B1%E5%B8%82%20AND%20%28%E5%A4%A7%E9%9B%A8%E8%AD%A6%E5%A0%B1%20OR%20%E8%AD%A6%E5%A0%B1%20OR%20%E9%81%BF%E9%9B%A3%E6%8C%87%E7%A4%BA%20OR%20%E9%AB%98%E9%BD%A2%E8%80%85%E7%AD%89%E9%81%BF%E9%9B%A3%20OR%20%E5%9C%9F%E7%A0%82%E7%81%BD%E5%AE%B3%20OR%20%E6%B5%B8%E6%B0%B4%20OR%20%E6%B0%BE%E6%BF%AB%20OR%20%E5%9C%B0%E9%9C%87%20OR%20%E5%8F%B0%E9%A2%A8%20OR%20%E6%B4%A5%E6%B3%A2%29&hl=ja&gl=JP&ceid=JP:ja",
+    "url": "https://news.google.com/rss/search?q=%E5%A4%A7%E6%9D%B1%E5%B8%82%20AND%20%28%E5%A4%A7%E9%9B%A8%20OR%20%E8%AD%A6%E5%A0%B1%20OR%20%E9%81%BF%E9%9B%A3%E6%8C%87%E7%A4%BA%20OR%20%E9%AB%98%E9%BD%A2%E8%80%85%E7%AD%89%E9%81%BF%E9%9B%A3%20OR%20%E5%9C%9F%E7%A0%82%E7%81%BD%E5%AE%B3%20OR%20%E6%B5%B8%E6%B0%B4%20OR%20%E6%B0%BE%E6%BF%AB%20OR%20%E5%9C%B0%E9%9C%87%20OR%20%E5%8F%B0%E9%A2%A8%20OR%20%E6%B4%A5%E6%B3%A2%29&hl=ja&gl=JP&ceid=JP:ja",
     "webhook_env": "DISCORD_WEBHOOK_URL_SAIGAI",
     "max_per_run": 100,
     "dedup_first_n": 0,
