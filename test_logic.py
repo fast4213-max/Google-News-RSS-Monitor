@@ -214,12 +214,24 @@ def test_batch_cooldown_opens_next_wave():
             os.remove(path)
 
 
-def test_similarity_threshold_catches_reangled_followup():
+def test_similarity_threshold_reangled_followup_boundary():
     """
-    実際にあった事例の再現テスト: 同じ事件について「メモ・ノートが見つかった」
-    という新しい切り口の続報が、言い回しの違いから別の新しい話題として
-    誤判定されてしまっていた(閾値0.28では類似度0.34未満で別クラスタ扱いになる)。
-    閾値を0.17まで下げたことで、これらが正しく同じクラスタに分類されることを確認する。
+    デフォルト閾値の境界を、実データで固定しておくテスト。
+
+    題材は実際にあった事例: 同じ事件について「メモ・ノートが見つかった」という
+    切り口の違う続報。既存クラスタとの類似度は実測 **約0.19** しかない。
+
+    そのため現在のデフォルト閾値(0.2)では「別の話題」と判定され、続報として
+    通知される。これは意図した挙動。閾値を0.12まで下げていた頃はこれを同じ話題
+    として間引けていたが、その水準だと「大東市で火災」と「大東市で交通事故」の
+    ような**無関係な記事同士**まで0.15〜0.27で誤マッチし、別の出来事が黙って
+    間引かれる副作用があったため、0.2に引き上げた。
+
+    切り口の違う続報も間引きたい場合は、feeds.json で
+    dedup_similarity_threshold を 0.17 程度まで下げる(誤マッチのリスクは上がる)。
+
+    _similarity の実装を変えて類似度が大きくずれた場合に気づけるよう、
+    実測値そのものをここで固定する。
     """
     feed_id = "test_similarity_reangled"
     path = dedup._clusters_path(feed_id)
@@ -247,9 +259,6 @@ def test_similarity_threshold_catches_reangled_followup():
         dedup.classify_articles(feed_id, seed, now=base, first_n=3)
 
         # 「メモ・ノートが見つかった」という新しい切り口の続報(実際にあった事例)。
-        # 配信元はC新聞(初見)なので、続報通知はされない(既知配信元ルール)が、
-        # 「同じクラスタに分類される」こと自体をここでは検証したいので、
-        # 直接クラスタとの類似度を確認する。
         reangled = dedup.normalize_title(
             "事件前に「あいつを殺す」とのメモ見つかる スーパーで元妻を刺殺 逮捕の男の自宅で - C新聞"
         )
@@ -257,10 +266,20 @@ def test_similarity_threshold_catches_reangled_followup():
         best_ratio = max(
             dedup._similarity(reangled, t) for c in clusters for t in c["titles"]
         )
-        assert best_ratio >= dedup.DEFAULT_SIMILARITY_THRESHOLD, (
-            f"切り口の違う続報が同じクラスタと判定されない: best_ratio={best_ratio}"
+        # 実測値の固定 (_similarity の挙動が変わったら気づけるように)
+        assert 0.18 <= best_ratio <= 0.20, f"類似度の実測値が想定から外れた: {best_ratio}"
+
+        # デフォルト閾値(0.2)では別話題 = 続報として通知される
+        assert best_ratio < dedup.DEFAULT_SIMILARITY_THRESHOLD, (
+            f"デフォルト閾値の想定が変わっている: best_ratio={best_ratio} / "
+            f"threshold={dedup.DEFAULT_SIMILARITY_THRESHOLD}"
         )
-        print("OK: test_similarity_threshold (切り口の違う続報も同じクラスタと判定される)")
+        # 閾値を下げれば同じ話題として間引ける、という逃げ道が残っていること
+        assert best_ratio >= 0.17
+        print(
+            f"OK: test_similarity_threshold_boundary "
+            f"(切り口の違う続報は類似度{best_ratio:.2f}=閾値0.2未満のため別話題として通知される)"
+        )
     finally:
         if os.path.exists(path):
             os.remove(path)
@@ -318,7 +337,7 @@ def test_edited_article_resurfacing_as_old_is_skipped():
     実際にあった事例の再現テスト: Googleニュース側で既存記事のpubDateだけ更新されて
     再配信され、タイトルの言い回しがわずかに変わった結果、旧クラスタとマッチせず
     「初めての話題」として誤判定され、翌日になって古い内容が通知されてしまっていた。
-    閾値を緩めた(0.12)ことで、こうした再配信記事も既存クラスタに正しくマッチし、
+    閾値(0.2)でもこうした再配信記事はほぼ同一タイトルのため既存クラスタに正しくマッチし、
     old_ids(fresh_hours超過)の判定で通知されずに間引かれることを確認する。
     """
     feed_id = "test_edited_resurface"
@@ -621,7 +640,7 @@ if __name__ == "__main__":
     test_diff_and_queue_logic()
     test_dedup_clustering()
     test_batch_cooldown_opens_next_wave()
-    test_similarity_threshold_catches_reangled_followup()
+    test_similarity_threshold_reangled_followup_boundary()
     test_edited_article_resurfacing_as_old_is_skipped()
     test_old_article_only_skipped_when_topic_already_notified()
     test_read_ids_order_is_preserved()

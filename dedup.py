@@ -29,9 +29,11 @@ Discordに同じ話題の記事が延々と流れ続けるのを防ぐための�
     再配信されるケースを含む)。
       - すでに通知済みの話題(既存クラスタ)にマッチする古い記事 → 捨てる
       - どのクラスタにもマッチしない古い記事(=初めての話題) → 通知する(見逃し防止)
-    類似度閾値(dedup_similarity_threshold)を緩めに設定しているのは、
-    言い回しが変わった再配信記事でも既存クラスタに正しくマッチさせ、
-    上記の「古い記事は捨てる」判定にきちんと乗せるためでもある。
+    そのため類似度閾値(dedup_similarity_threshold)は、言い回しが多少変わった
+    再配信記事なら既存クラスタにマッチする程度には緩く設定してある
+    (上記の「古い記事は捨てる」判定に乗せるため)。
+    ただし下げすぎると、地名などの共通語を含むだけの無関係な記事同士まで
+    同じ話題とみなされ、別の出来事が黙って間引かれてしまう。
   - クラスタ情報は state/clusters_<feed_id>.json に永続化する。
     dedup_cluster_max_age_hours より古いクラスタは自然に破棄され、
     無関係な後日の記事が誤って同じクラスタに混ざるのを防ぐ。
@@ -50,7 +52,11 @@ from email.utils import parsedate_to_datetime
 STATE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "state")
 
 DEFAULT_FIRST_N = 3                     # 1つの波(バッチ)で無条件に通知する件数
-DEFAULT_SIMILARITY_THRESHOLD = 0.12     # タイトル類似度(bigram Dice係数)がこれ以上なら同じ話題とみなす
+DEFAULT_SIMILARITY_THRESHOLD = 0.2      # タイトル類似度(bigram Dice係数)がこれ以上なら同じ話題とみなす
+                                        # 地名などの共通語を含むだけの無関係な記事同士が0.15前後まで上がるため、
+                                        # それを誤って同じ話題とみなさない水準に置いている。
+                                        # 詳細なトレードオフは test_logic.py の
+                                        # test_similarity_threshold_reangled_followup_boundary を参照
 DEFAULT_BATCH_COOLDOWN_MINUTES = 30     # 次の波を開くまでのクールダウン(分)。pubDate差・壁時計差の両方に使う
 DEFAULT_CLUSTER_MAX_AGE_HOURS = 72      # これより古いクラスタは破棄する
 MAX_TITLES_PER_CLUSTER = 5              # クラスタ内に保持する正規化タイトルの上限(メモリ節約)
