@@ -10,6 +10,8 @@
      (キューの記事は前回「通知する」と判定済みなので、以降の日付/重複判定にはかけない)
   3.4 exclude_words に該当する記事は、既読化のみして通知しない
       (そのフィードでは扱わない話題。別フィード/別チャンネルに任せる場合に使う)
+  3.45 地域名が放送局名など(例「関西テレビ」)の一部としてしか出てこない記事は、
+      地域の誤マッチとみなして既読化のみし、通知しない (area_words / area_false_match_words)
   3.5 公開日が stale_days 日より古い記事は、既読化のみして通知しない
       (Googleニュースの検索結果に急に大昔の記事が紛れ込むことがあるため)
   3.6 公開日が fresh_hours 時間より古い記事は「古い記事」として印を付け、
@@ -96,6 +98,14 @@ def load_feeds() -> list[dict]:
                 raise RuntimeError(
                     f"feeds.json の '{threshold_key}' は0〜1の数値で指定してください: {feed}"
                 )
+        for words_key in ("area_words", "area_false_match_words"):
+            words = feed.get(words_key)
+            if words is not None and not (
+                isinstance(words, list) and all(isinstance(w, str) for w in words)
+            ):
+                raise RuntimeError(
+                    f"feeds.json の '{words_key}' は文字列の配列で指定してください: {feed}"
+                )
         exclude_words = feed.get("exclude_words")
         if exclude_words is not None and not (
             isinstance(exclude_words, list) and all(isinstance(w, str) for w in exclude_words)
@@ -160,6 +170,37 @@ def is_too_old_for_fresh_notify(pub_date: str, fresh_hours: int, ctx: str) -> bo
     return is_older_than(pub_date, timedelta(hours=fresh_hours), ctx)
 
 
+def is_false_area_match(
+    title: str, area_words: list[str], false_match_words: list[str]
+) -> bool:
+    """
+    タイトルに出てくる地域名が、放送局名や社名の一部でしかない(=その記事は
+    その地域の話ではない)かどうかを判定する。
+
+    GoogleニュースのRSSは「(大阪 OR 近畿 OR 関西) AND (台風 OR 大雨 ...)」のような
+    検索式で記事を拾うが、この地域名の判定は本文や配信元名まで含めて行われる。
+    そのため「【台風・大雨解説】…関東各地で記録的な大雨…(関西テレビ) - Yahoo!ニュース」
+    のように、関東の話なのに配信元が「関西テレビ」であるだけの記事が混ざってしまう。
+
+    そこで、
+      - タイトルに地域名(area_words)が含まれている
+      - しかし false_match_words(例「関西テレビ」)を取り除くと地域名が1つも残らない
+    という記事だけを「地域の誤マッチ」と判定する。
+
+    タイトルに地域名がもともと1つも無い記事は、地域名が本文側にあって拾われた
+    (例「大雨、死者5人・不明6人に」)可能性があり、タイトルだけでは判断できないため
+    誤マッチとはみなさない(災害情報の取りこぼしを避けるための安全側の判定)。
+    """
+    if not area_words or not false_match_words:
+        return False
+    if not any(w in title for w in area_words):
+        return False
+    stripped = title
+    for w in false_match_words:
+        stripped = stripped.replace(w, "")
+    return not any(w in stripped for w in area_words)
+
+
 def process_feed(feed: dict) -> None:
     feed_id = feed["id"]
     feed_name = feed["name"]
@@ -188,6 +229,10 @@ def process_feed(feed: dict) -> None:
     # 「大東市の一般ニュース」と「大東市の災害情報」のように、同じ記事を拾う
     # フィードが複数ある場合に、チャンネルごとの住み分けをするために使う。
     exclude_words = list(feed.get("exclude_words", []))
+    # 地域名(area_words)が、放送局名など(area_false_match_words)の一部としてしか
+    # タイトルに出てこない記事は、地域の誤マッチとして通知しない。詳細は is_false_area_match 参照。
+    area_words = list(feed.get("area_words", []))
+    area_false_match_words = list(feed.get("area_false_match_words", []))
     ctx = f"feed:{feed_id}"
 
     # 1. RSS取得・パース
@@ -251,6 +296,27 @@ def process_feed(feed: dict) -> None:
             logger.info(
                 ctx,
                 f"exclude_words に該当する記事を{len(excluded_ids)}件、通知せず既読化しました",
+            )
+        unread_new = [a for a in unread_new if a.id not in read_ids]
+
+    # 2.56 地域名が放送局名など(例「関西テレビ」)の一部としてしか出てこない記事は、
+    #      その地域の話ではないので通知せず既読化だけする。
+    #      GoogleニュースのRSSは配信元名も検索対象にしてしまうため、
+    #      「関東の大雨の記事を関西テレビが配信した」ものが (大阪 OR 近畿 OR 関西) の
+    #      検索式に引っかかって届いてしまうのを防ぐ。
+    if area_words and area_false_match_words:
+        false_area_ids = [
+            a.id
+            for a in unread_new
+            if is_false_area_match(a.title, area_words, area_false_match_words)
+        ]
+        if false_area_ids:
+            state_manager.append_read_ids(feed_id, false_area_ids)
+            read_ids = read_ids | set(false_area_ids)
+            logger.info(
+                ctx,
+                f"地域名が配信元名などの一部でしかない記事を{len(false_area_ids)}件、"
+                "通知せず既読化しました",
             )
         unread_new = [a for a in unread_new if a.id not in read_ids]
 

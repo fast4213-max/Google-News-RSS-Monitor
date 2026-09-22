@@ -1170,6 +1170,97 @@ def test_exclude_words_skips_articles_but_marks_them_read():
                 os.remove(p_)
 
 
+def test_area_false_match_skips_broadcaster_name_only_articles():
+    """
+    地域名が配信元名(例「関西テレビ」)の一部としてしか出てこない記事は
+    通知されず、既読化だけされることを確認する。
+
+    GoogleニュースのRSSは配信元名まで検索対象にするため、
+    「関東の大雨の記事を関西テレビが配信した」ものが
+    (大阪 OR 近畿 OR 関西) の検索式で拾われてしまうのを防ぐ。
+    一方、タイトルに地域名がもともと無い記事(本文側で拾われた可能性がある)は
+    取りこぼさずに通知することも確認する。
+    """
+    from datetime import datetime, timezone
+    from email.utils import format_datetime
+
+    import notifier
+    import state_manager
+
+    feed_id = "test_area_false_match"
+    feed = {
+        "id": feed_id,
+        "name": "自然災害",
+        "url": "https://example.invalid/rss",
+        "webhook_env": "DUMMY_WEBHOOK_ENV",
+        "dedup_first_n": 0,
+        "area_words": ["大阪", "近畿", "関西"],
+        "area_false_match_words": ["関西テレビ", "カンテレ"],
+    }
+    paths = [
+        state_manager._read_path(feed_id),
+        state_manager._queue_path(feed_id),
+        dedup._clusters_path(feed_id),
+    ]
+
+    pub = format_datetime(datetime.now(timezone.utc))
+    articles = [
+        # 地域名が配信元名の中にしか無い(関東の話) → 通知しない
+        rss.Article(id="a1", title="【台風・大雨解説】関東各地で9月観測史上1位となる記録的な大雨（関西テレビ） - Yahoo!ニュース", link="https://example.com/a1", pub_date=pub),
+        # 配信元が関西テレビでも、タイトルに大阪の話だと分かる地域名がある → 通知する
+        rss.Article(id="a2", title="大阪府に大雨警報 淀川が氾濫危険水位に（関西テレビ） - Yahoo!ニュース", link="https://example.com/a2", pub_date=pub),
+        # タイトルに地域名が無い(本文側で拾われた可能性がある) → 取りこぼさず通知する
+        rss.Article(id="a3", title="大雨、死者５人・不明６人に - 東大阪経済新聞", link="https://example.com/a3", pub_date=pub),
+    ]
+
+    sent_ids = []
+    original_fetch = rss.fetch_articles
+    original_send = notifier.send_articles
+    original_error = notifier.send_error
+
+    def fake_send_articles(webhook_env, feed_name, arts, max_count):
+        delivered = arts[:max_count]
+        sent_ids.extend(a["id"] for a in delivered)
+        return delivered
+
+    try:
+        for p_ in paths:
+            if os.path.exists(p_):
+                os.remove(p_)
+        rss.fetch_articles = lambda url: articles
+        notifier.send_articles = fake_send_articles
+        notifier.send_error = lambda *a, **k: None
+
+        main.process_feed(feed)
+        assert "a1" not in sent_ids, f"配信元名だけの誤マッチが通知された: {sent_ids}"
+        assert set(sent_ids) == {"a2", "a3"}, sent_ids
+        # 除外した記事も既読化されていること(毎回判定し直さないため)
+        assert set(state_manager.load_read_ids(feed_id)) == {"a1", "a2", "a3"}
+        print("OK: test_area_false_match (配信元名だけの地域一致は通知せず既読化)")
+
+        # 単体判定の確認
+        assert main.is_false_area_match(articles[0].title, ["大阪", "近畿", "関西"], ["関西テレビ"])
+        assert not main.is_false_area_match(articles[1].title, ["大阪", "近畿", "関西"], ["関西テレビ"])
+        assert not main.is_false_area_match(articles[2].title, ["大阪", "近畿", "関西"], ["関西テレビ"])
+        # 設定していないフィードでは従来どおり全件通知されること
+        for p_ in paths:
+            if os.path.exists(p_):
+                os.remove(p_)
+        sent_ids.clear()
+        main.process_feed(
+            {k: v for k, v in feed.items() if k not in ("area_words", "area_false_match_words")}
+        )
+        assert set(sent_ids) == {"a1", "a2", "a3"}, sent_ids
+        print("OK: test_area_false_match (未設定なら従来どおり通知される)")
+    finally:
+        rss.fetch_articles = original_fetch
+        notifier.send_articles = original_send
+        notifier.send_error = original_error
+        for p_ in paths:
+            if os.path.exists(p_):
+                os.remove(p_)
+
+
 if __name__ == "__main__":
     test_parse_success()
     test_parse_no_channel_raises()
@@ -1199,4 +1290,5 @@ if __name__ == "__main__":
     test_feeds_json_is_valid()
     test_rss_retries_on_temporary_failure()
     test_exclude_words_skips_articles_but_marks_them_read()
+    test_area_false_match_skips_broadcaster_name_only_articles()
     print("\n全テスト成功")
