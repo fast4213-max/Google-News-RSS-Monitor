@@ -49,6 +49,7 @@ DEFAULT_FRESH_HOURS = 3          # 記事の公開日がこれより古ければ
 DEFAULT_DEDUP_FIRST_N = dedup.DEFAULT_FIRST_N
 DEFAULT_DEDUP_SIMILARITY_THRESHOLD = dedup.DEFAULT_SIMILARITY_THRESHOLD
 DEFAULT_DEDUP_BATCH_COOLDOWN_MINUTES = dedup.DEFAULT_BATCH_COOLDOWN_MINUTES
+DEFAULT_DEDUP_SAME_SOURCE_THRESHOLD = dedup.DEFAULT_SAME_SOURCE_THRESHOLD
 
 FEEDS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "feeds.json")
 
@@ -76,11 +77,14 @@ def load_feeds() -> list[dict]:
                 raise RuntimeError(
                     f"feeds.json の '{optional_key}' は整数で指定してください: {feed}"
                 )
-        threshold = feed.get("dedup_similarity_threshold")
-        if threshold is not None and not (isinstance(threshold, (int, float)) and 0 <= threshold <= 1):
-            raise RuntimeError(
-                f"feeds.json の 'dedup_similarity_threshold' は0〜1の数値で指定してください: {feed}"
-            )
+        for threshold_key in ("dedup_similarity_threshold", "dedup_same_source_threshold"):
+            threshold = feed.get(threshold_key)
+            if threshold is not None and not (
+                isinstance(threshold, (int, float)) and 0 <= threshold <= 1
+            ):
+                raise RuntimeError(
+                    f"feeds.json の '{threshold_key}' は0〜1の数値で指定してください: {feed}"
+                )
         ignore_words = feed.get("dedup_ignore_words")
         if ignore_words is not None and not (
             isinstance(ignore_words, list) and all(isinstance(w, str) for w in ignore_words)
@@ -159,6 +163,9 @@ def process_feed(feed: dict) -> None:
     # 同じ話題と誤判定される原因になるので、常に除外する。
     # feeds.json の "dedup_ignore_words" で、都道府県名など他の共通語も追加できる。
     dedup_ignore_words = [feed_name] + list(feed.get("dedup_ignore_words", []))
+    dedup_same_source_threshold = feed.get(
+        "dedup_same_source_threshold", DEFAULT_DEDUP_SAME_SOURCE_THRESHOLD
+    )
     ctx = f"feed:{feed_id}"
 
     # 1. RSS取得・パース
@@ -227,6 +234,7 @@ def process_feed(feed: dict) -> None:
         batch_cooldown_minutes=dedup_batch_cooldown_minutes,
         old_ids=old_ids,
         ignore_words=dedup_ignore_words,
+        same_source_threshold=dedup_same_source_threshold,
     )
     if dedup_skip_ids:
         # 記事の並び(古い順)を保ったまま既読化する

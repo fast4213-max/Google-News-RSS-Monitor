@@ -59,6 +59,13 @@ DEFAULT_SIMILARITY_THRESHOLD = 0.2      # タイトル類似度(bigram Dice係�
                                         # test_similarity_threshold_reangled_followup_boundary を参照
 DEFAULT_BATCH_COOLDOWN_MINUTES = 30     # 次の波を開くまでのクールダウン(分)。pubDate差・壁時計差の両方に使う
 DEFAULT_CLUSTER_MAX_AGE_HOURS = 72      # これより古いクラスタは破棄する
+DEFAULT_SAME_SOURCE_THRESHOLD = 0.6     # 「同じ配信元だけで構成されたクラスタ」に、同じ配信元の記事を
+                                        # 合流させるときに要求する類似度。通常の閾値より厳しくする。
+                                        # 同じ配信元は定型の見出しテンプレートを使い回すため、
+                                        # 別々の出来事でも見出しが似てしまう(実測0.31〜0.44)。
+                                        # 一方、同じ配信元の記事が本当に同じ話題なのは
+                                        # 「pubDateだけ更新された再配信」がほとんどで、その場合は0.9以上になる。
+                                        # 詳細は classify_articles のdocstring参照
 MAX_TITLES_PER_CLUSTER = 5              # クラスタ内に保持する正規化タイトルの上限(メモリ節約)
 MAX_CLUSTERS_PER_FEED = 300             # フィードあたりのクラスタ保持上限(古い順に間引く)
 
@@ -100,9 +107,13 @@ def load_clusters(feed_id: str) -> list[dict]:
         if not titles:
             continue
         batch_open_count = c.get("batch_open_count")
+        # sources は後から追加した項目。旧形式のstateには無いので、
+        # 無ければ「配信元不明」として空リストで扱う(判定は通常の閾値に自然に落ちる)。
+        sources = [s for s in c.get("sources", []) if isinstance(s, str)]
         clusters.append(
             {
                 "titles": titles[-MAX_TITLES_PER_CLUSTER:],
+                "sources": sources[-MAX_TITLES_PER_CLUSTER:],
                 "batch_open_count": batch_open_count if isinstance(batch_open_count, int) else 0,
                 "batch_ref_pub_date": (
                     c.get("batch_ref_pub_date") if isinstance(c.get("batch_ref_pub_date"), str) else ""
@@ -163,6 +174,18 @@ def normalize_title(title: str, ignore_words: "list[str] | tuple[str, ...]" = ()
     return stripped if stripped else t
 
 
+def extract_source(title: str) -> str:
+    """
+    タイトル末尾の " - 配信元メディア名" から配信元を取り出す。
+    Googleニュースのタイトルは "見出し - 媒体名" の形で統一されているため、
+    最後の " - " 以降を配信元とみなす(normalize_title が落としているのと同じ部分)。
+    その形式でない場合は空文字列を返し、呼び出し側は「配信元不明」として扱う。
+    """
+    if " - " not in title:
+        return ""
+    return title.rsplit(" - ", 1)[1].strip()
+
+
 def _bigrams(s: str) -> set:
     if len(s) < 2:
         return {s} if s else set()
@@ -214,6 +237,42 @@ def _parse_pub_date(value: str) -> datetime | None:
     return parsed
 
 
+def _required_threshold(
+    cluster: dict,
+    source: str,
+    similarity_threshold: float,
+    same_source_threshold: float,
+) -> float:
+    """
+    その記事を cluster に合流させるのに必要な類似度を返す。
+
+    通常は similarity_threshold。ただし
+      「クラスタが単一の配信元だけで構成されていて、かつ記事の配信元がそれと同じ」
+    場合に限り、より厳しい same_source_threshold を要求する。
+
+    理由:
+      同じ配信元は定型の見出しテンプレートを使い回すため、まったく別の出来事でも
+      見出しが似てしまう(実測: 号外NETの別イベント告知どうしで0.34、
+      選挙ドットコムの別議員の一般質問どうしで0.38、
+      ｄメニューニュースの「声かけ」と「盗撮」の防犯情報で0.32)。
+      これらが同じ話題と誤判定されると、片方が通知されずに消える。
+      一方、同じ配信元の記事が本当に同じ話題であるケースは
+      「既存記事のpubDateだけ更新されて再配信された」ものがほとんどで、
+      その場合タイトルはほぼ同一(実測0.93〜0.95)になるため、厳しい閾値でも拾える。
+
+    クラスタに複数の配信元が既に入っている場合は「各社が報じている本物の話題」
+    なので、同じ配信元の続報でも通常の閾値で合流させる(そうしないと
+    大きな事件で同じ社の続報が毎回新しい話題として通知されてしまう)。
+    配信元が取れない(空文字列)場合は判定材料が無いので通常の閾値を使う。
+    """
+    if not source:
+        return similarity_threshold
+    cluster_sources = {s for s in cluster.get("sources", []) if s}
+    if cluster_sources == {source}:
+        return same_source_threshold
+    return similarity_threshold
+
+
 def classify_articles(
     feed_id: str,
     articles: list[dict],
@@ -224,6 +283,7 @@ def classify_articles(
     cluster_max_age_hours: int = DEFAULT_CLUSTER_MAX_AGE_HOURS,
     old_ids: set[str] | None = None,
     ignore_words: "list[str] | tuple[str, ...]" = (),
+    same_source_threshold: float = DEFAULT_SAME_SOURCE_THRESHOLD,
 ) -> tuple[list[dict], set[str]]:
     """
     未通知記事(古い順)を「同じ話題」でクラスタリングし、通知すべきものだけを返す
@@ -233,6 +293,8 @@ def classify_articles(
     old_ids : 「配信から時間が経っている記事」のID集合(main.py の fresh_hours 判定結果)
     ignore_words: 類似度の計算から除外する語(フィード名=検索キーワードなど)。
                   詳細は normalize_title のdocstring参照
+    same_source_threshold: 同じ配信元だけで構成されたクラスタに、その同じ配信元の
+                  記事を合流させる場合に要求する類似度。詳細は _required_threshold 参照
     戻り値: (to_notify, skip_ids)
       to_notify: 通知する記事のリスト(古い順、タイトルは一切書き換えない)
       skip_ids : 通知せず既読化だけする記事IDの集合
@@ -268,16 +330,29 @@ def classify_articles(
 
     for a in articles:
         norm = normalize_title(a["title"], ignore_words)
+        source = extract_source(a["title"])
 
+        # クラスタごとに「このクラスタに合流するのに必要な類似度」を求めて比較する。
+        # 同じ配信元だけで構成されたクラスタに、その同じ配信元の記事を合流させる場合は
+        # 定型見出しによる誤判定を避けるため、より厳しい閾値を要求する(下記 _required 参照)。
         best_cluster = None
         best_ratio = 0.0
+        best_required = similarity_threshold
         for c in clusters:
             ratio = max((_similarity(norm, t) for t in c["titles"]), default=0.0)
-            if ratio > best_ratio:
-                best_ratio = ratio
+            required = _required_threshold(
+                c, source, similarity_threshold, same_source_threshold
+            )
+            # 「閾値を満たしているか」を優先し、その中で類似度が高いものを選ぶ。
+            # (厳しい閾値で弾かれたクラスタより、通常閾値で通るクラスタを優先するため)
+            candidate = (ratio >= required, ratio)
+            current = (best_ratio >= best_required, best_ratio)
+            if best_cluster is None or candidate > current:
                 best_cluster = c
+                best_ratio = ratio
+                best_required = required
 
-        if best_cluster is not None and best_ratio >= similarity_threshold:
+        if best_cluster is not None and best_ratio >= best_required:
             # すでに通知済みの話題。配信から時間が経った記事は後追い報道とみなして捨てる
             if a["id"] in old_ids:
                 skip_ids.add(a["id"])
@@ -313,6 +388,8 @@ def classify_articles(
             best_cluster["last_notified_at"] = now.isoformat()
             best_cluster["titles"].append(norm)
             best_cluster["titles"] = best_cluster["titles"][-MAX_TITLES_PER_CLUSTER:]
+            best_cluster.setdefault("sources", []).append(source)
+            best_cluster["sources"] = best_cluster["sources"][-MAX_TITLES_PER_CLUSTER:]
 
             article_pub = _parse_pub_date(a.get("pub_date", ""))
             if article_pub is not None:
@@ -322,6 +399,7 @@ def classify_articles(
         else:
             new_cluster = {
                 "titles": [norm],
+                "sources": [source],
                 "batch_open_count": 1,
                 "batch_ref_pub_date": a.get("pub_date", ""),
                 "last_notified_at": now.isoformat(),

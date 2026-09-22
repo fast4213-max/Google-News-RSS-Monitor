@@ -410,6 +410,206 @@ def test_ignore_words_known_limitation():
     )
 
 
+def test_extract_source():
+    """タイトル末尾の " - 媒体名" から配信元を取り出せること。"""
+    assert dedup.extract_source("大東市で火災 - A新聞") == "A新聞"
+    # 見出し中に " - " が複数あっても、最後のものを配信元とみなす
+    assert dedup.extract_source("速報 - 大東市で火災 - 地域ニュースサイト号外NET") == "地域ニュースサイト号外NET"
+    # 形式に合わない場合は空文字列(=配信元不明)
+    assert dedup.extract_source("大東市で火災") == ""
+    print("OK: test_extract_source (配信元を抽出できる)")
+
+
+def test_same_source_threshold_splits_templated_headlines():
+    """
+    同じ配信元が定型テンプレートで量産する見出しが、別々の話題として
+    扱われることを確認する(実データで見つかった誤判定の再現)。
+
+    号外NET / 選挙ドットコム / ｄメニューニュース の防犯情報などは、
+    毎回ほぼ同じ書式で別の出来事を配信するため、地名を除外してもなお
+    類似度0.31〜0.44に達し、同じ話題と誤判定されていた。
+    """
+    feed_id = "test_same_source_split"
+    path = dedup._clusters_path(feed_id)
+    from datetime import datetime, timezone
+
+    now = datetime(2026, 9, 22, 3, 0, tzinfo=timezone.utc)
+    ig = ["大東市"]
+
+    cases = [
+        (
+            "号外NETの別イベント告知",
+            "【大東市】9月21日は何の日？ポップタウン住道オペラパークで9月23日には「地域包括フェスティバル」を開催！ - 地域ニュースサイト号外NET",
+            "【大東市】ポップタウン住道オペラパークでオリジナル防災グッズを作って遊んでみませんか？ - 地域ニュースサイト号外NET",
+        ),
+        (
+            "選挙ドットコムの別議員の一般質問",
+            "大東市9月議会 9/24(木)10：00から一般質問 シニアディスコ - 選挙ドットコム",
+            "大東市令和8年9月議会 あずま健太郎一般質問 ９月２４日10:00から - 選挙ドットコム",
+        ),
+        (
+            "ｄメニューニュースの別の防犯情報",
+            "（大阪）大東市寺川５丁目付近で声かけ　９月１８日 - ｄメニューニュース",
+            "（大阪）大東市北条４丁目付近で盗撮の疑い　９月９日 - ｄメニューニュース",
+        ),
+    ]
+    for label, t1, t2 in cases:
+        if os.path.exists(path):
+            os.remove(path)
+        try:
+            ratio = dedup._similarity(
+                dedup.normalize_title(t1, ig), dedup.normalize_title(t2, ig)
+            )
+            # 通常の閾値は超えてしまう(=同一配信元ルールが無いと誤判定される)ことを確認
+            assert ratio >= dedup.DEFAULT_SIMILARITY_THRESHOLD, f"{label}: 前提が崩れた {ratio}"
+            assert ratio < dedup.DEFAULT_SAME_SOURCE_THRESHOLD, f"{label}: 前提が崩れた {ratio}"
+
+            arts = [
+                {"id": "t1", "title": t1, "link": "https://example.com/1", "pub_date": ""},
+                {"id": "t2", "title": t2, "link": "https://example.com/2", "pub_date": ""},
+            ]
+            to_notify, skip_ids = dedup.classify_articles(
+                feed_id, arts, now=now, ignore_words=ig
+            )
+            assert {a["id"] for a in to_notify} == {"t1", "t2"}, (label, to_notify)
+            assert skip_ids == set(), (label, skip_ids)
+            assert len(dedup.load_clusters(feed_id)) == 2, f"{label}: 別クラスタにならなかった"
+            print(f"OK: test_same_source_threshold ({label} 類似度{ratio:.2f} → 別の話題として通知)")
+        finally:
+            if os.path.exists(path):
+                os.remove(path)
+
+
+def test_same_source_near_duplicate_still_clusters():
+    """
+    回帰テスト: 同一配信元ルールを入れても、
+    「既存記事のpubDateだけ更新されて再配信された」ケース(同じ配信元・ほぼ同一タイトル)は
+    従来どおり同じクラスタにまとまり、古い後追いとして間引かれること。
+
+    このケースは過去に「翌日になって古い内容が通知される」不具合として修正済みで、
+    同一配信元ルールで壊してはいけない。類似度が0.9以上あるため、
+    厳しい閾値(DEFAULT_SAME_SOURCE_THRESHOLD)でも拾える。
+    """
+    feed_id = "test_same_source_dup"
+    path = dedup._clusters_path(feed_id)
+    if os.path.exists(path):
+        os.remove(path)
+
+    from datetime import datetime, timezone
+
+    now = datetime(2026, 9, 22, 8, 10, tzinfo=timezone.utc)
+    ig = ["大東市"]
+    base_title = (
+        "【大東市】9月21日は何の日？ポップタウン住道オペラパークで9月23日には"
+        "「地域包括フェスティバル」を開催！ - 地域ニュースサイト号外NET"
+    )
+    edited_title = base_title.replace("開催！ -", "開催！(更新) -")
+    try:
+        ratio = dedup._similarity(
+            dedup.normalize_title(base_title, ig), dedup.normalize_title(edited_title, ig)
+        )
+        assert ratio >= dedup.DEFAULT_SAME_SOURCE_THRESHOLD, (
+            f"再配信記事が厳しい閾値を下回った: {ratio}"
+        )
+        dedup.classify_articles(
+            feed_id,
+            [{"id": "seed", "title": base_title, "link": "https://example.com/s", "pub_date": ""}],
+            now=now,
+            ignore_words=ig,
+        )
+        to_notify, skip_ids = dedup.classify_articles(
+            feed_id,
+            [{"id": "again", "title": edited_title, "link": "https://example.com/a", "pub_date": ""}],
+            now=now,
+            old_ids={"again"},
+            ignore_words=ig,
+        )
+        assert to_notify == [] and skip_ids == {"again"}, (to_notify, skip_ids)
+        assert len(dedup.load_clusters(feed_id)) == 1, "同一配信元の再配信が別クラスタになった"
+        print(f"OK: test_same_source_near_duplicate (再配信記事は類似度{ratio:.2f}で従来どおり間引かれる)")
+    finally:
+        if os.path.exists(path):
+            os.remove(path)
+
+
+def test_same_source_rule_only_applies_to_single_source_cluster():
+    """
+    複数の配信元が既に入っているクラスタ(=各社が報じている本物の話題)には、
+    同じ配信元の続報でも通常の閾値で合流すること。
+
+    ここで厳しい閾値を適用してしまうと、大きな事件で同じ社の続報が
+    毎回「新しい話題」として通知されてしまう。
+    """
+    feed_id = "test_same_source_multi"
+    path = dedup._clusters_path(feed_id)
+    if os.path.exists(path):
+        os.remove(path)
+
+    from datetime import datetime, timezone
+
+    now = datetime(2026, 9, 22, 3, 0, tzinfo=timezone.utc)
+    ig = ["大東市"]
+    try:
+        # 2社が報じた話題でクラスタを作る
+        seed = [
+            {"id": "m1", "title": "大東市のスーパーで従業員刺される 80歳男を現行犯逮捕 - TBS NEWS DIG",
+             "link": "https://example.com/1", "pub_date": ""},
+            {"id": "m2", "title": "スーパーで女性従業員が刺される 大阪府大東市 男を逮捕 - 日テレNEWS NNN",
+             "link": "https://example.com/2", "pub_date": ""},
+        ]
+        dedup.classify_articles(feed_id, seed, now=now, first_n=999, ignore_words=ig)
+        clusters = dedup.load_clusters(feed_id)
+        assert len(clusters) == 1, f"前提: 2社の記事が1クラスタになるべき {len(clusters)}"
+
+        # そこへ TBS(既にクラスタ内にいる配信元)の続報が来る。
+        # 通常の閾値(0.2)は超えるが、厳しい閾値(0.6)は下回る類似度でも合流すること。
+        followup = {"id": "m3",
+                    "title": "スーパーで従業員刺され死亡 80歳の男を殺人容疑で送検 大阪・大東市 - TBS NEWS DIG",
+                    "link": "https://example.com/3", "pub_date": ""}
+        ratio = max(
+            dedup._similarity(dedup.normalize_title(followup["title"], ig), t)
+            for t in clusters[0]["titles"]
+        )
+        assert dedup.DEFAULT_SIMILARITY_THRESHOLD <= ratio < dedup.DEFAULT_SAME_SOURCE_THRESHOLD, (
+            f"前提: 続報の類似度は通常閾値と厳しい閾値の間にあるべき {ratio}"
+        )
+        dedup.classify_articles(feed_id, [followup], now=now, first_n=999, ignore_words=ig)
+        assert len(dedup.load_clusters(feed_id)) == 1, (
+            "複数配信元のクラスタに同じ配信元の続報が合流しなかった"
+        )
+        print("OK: test_same_source_rule (複数配信元のクラスタには通常の閾値で合流する)")
+    finally:
+        if os.path.exists(path):
+            os.remove(path)
+
+
+def test_old_cluster_state_without_sources_is_loadable():
+    """
+    sources を持たない旧形式のクラスタstateを読んでもクラッシュせず、
+    「配信元不明」として通常の閾値で動作すること(過去にKeyError事故があったため)。
+    """
+    import json
+
+    feed_id = "test_old_cluster_schema"
+    path = dedup._clusters_path(feed_id)
+    try:
+        os.makedirs(dedup.STATE_DIR, exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(
+                {"clusters": [{"titles": ["大東市で火災住宅1棟全焼"], "batch_open_count": 1,
+                               "batch_ref_pub_date": "", "last_notified_at": ""}]},
+                f, ensure_ascii=False,
+            )
+        clusters = dedup.load_clusters(feed_id)
+        assert len(clusters) == 1 and clusters[0]["sources"] == [], clusters
+        # 配信元不明のクラスタには通常の閾値が使われること
+        assert dedup._required_threshold(clusters[0], "A新聞", 0.2, 0.6) == 0.2
+        print("OK: test_old_cluster_state (sources が無い旧stateでも壊れない)")
+    finally:
+        if os.path.exists(path):
+            os.remove(path)
+
+
 def test_old_article_only_skipped_when_topic_already_notified():
     """
     公開から時間が経った記事(old_ids)の扱い:
@@ -769,6 +969,11 @@ if __name__ == "__main__":
     test_ignore_words_removes_feed_keyword()
     test_ignore_words_end_to_end_keeps_topics_separate()
     test_ignore_words_known_limitation()
+    test_extract_source()
+    test_same_source_threshold_splits_templated_headlines()
+    test_same_source_near_duplicate_still_clusters()
+    test_same_source_rule_only_applies_to_single_source_cluster()
+    test_old_cluster_state_without_sources_is_loadable()
     test_edited_article_resurfacing_as_old_is_skipped()
     test_old_article_only_skipped_when_topic_already_notified()
     test_read_ids_order_is_preserved()
