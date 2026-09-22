@@ -1,3 +1,15 @@
 {
-  "clusters": []
+  "clusters": [
+    {
+      "titles": [
+        "大雨死者５人不明６人に"
+      ],
+      "sources": [
+        "東大阪経済新聞"
+      ],
+      "batch_open_count": 1,
+      "batch_ref_pub_date": "Tue, 22 Sep 2026 11:03:24 GMT",
+      "last_notified_at": "2026-09-22T11:10:37.664632+00:00"
+    }
+  ]
 }
