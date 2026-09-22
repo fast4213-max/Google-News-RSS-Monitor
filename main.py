@@ -29,6 +29,7 @@ git commit & push する(このスクリプト自体はgit操作を行わない)
 
 import json
 import os
+import re
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 
@@ -39,6 +40,12 @@ import rss
 import state_manager
 
 _CONTEXT = "main"
+_JST = timezone(timedelta(hours=9))
+# 「あす22日は」のような、配信元が翌日を指して使う相対日付表現。
+# Googleニュースへの掲載や本スクリプトの通知が遅れると、実際にはとっくに
+# 過ぎた日を指したまま「あす」という表現だけが残り、内容が誤解を招く
+# (例: 23日に届いた通知が「あす22日は晴れ」と案内する)。
+_RELATIVE_DATE_TITLE_RE = re.compile(r"(?:あす|明日)(\d{1,2})日")
 DEFAULT_MAX_NOTIFY_PER_RUN = 50  # 1フィードあたり1回で通知する上限件数のデフォルト値
 DEFAULT_STALE_ARTICLE_DAYS = 3   # 記事の公開日がこれより古ければ「既読化のみ」で通知しないデフォルト値(日単位、大昔の記事対策)
 DEFAULT_FRESH_HOURS = 3          # 記事の公開日がこれより古ければ「古い記事」として扱うデフォルト値(時間単位)
@@ -170,6 +177,45 @@ def is_too_old_for_fresh_notify(pub_date: str, fresh_hours: int, ctx: str) -> bo
     return is_older_than(pub_date, timedelta(hours=fresh_hours), ctx)
 
 
+def is_stale_relative_date_title(title: str, pub_date: str, ctx: str) -> bool:
+    """
+    タイトルに「あす22日は」のような相対日付表現が含まれる記事が、
+    通知しようとしている時点ですでに古くなっていないかを判定する。
+
+    「あす(N)日」は本来、配信元がその記事を出した翌日がN日であることを
+    示す表現。ところがGoogleニュース側の掲載遅延やRSS取得間隔により、
+    実際に通知されるのがN日を過ぎてからになることがあり、その場合
+    「あす22日は晴れ」のような予報がすでに終わった日の話として届いてしまい、
+    利用者を混乱させる。
+
+    そこで、タイトルの「あす(N)日」が指す実際の日付(公開日の翌日)を求め、
+    それが通知しようとしている時点(JST)の今日より前になっていれば、
+    古い記事とみなす。タイトルにこの表現が無い記事や、pub_dateが無い/
+    パースできない記事、翌日の日付とNが一致しない(表現の意味を誤読している
+    可能性がある)場合は、安全側に倒して古いとは判定しない(=通知する)。
+    """
+    m = _RELATIVE_DATE_TITLE_RE.search(title)
+    if not m or not pub_date:
+        return False
+    try:
+        published_at = parsedate_to_datetime(pub_date)
+        if published_at.tzinfo is None:
+            published_at = published_at.replace(tzinfo=timezone.utc)
+    except (TypeError, ValueError) as e:
+        logger.warn(ctx, f"pubDateのパースに失敗したため相対日付フィルタをスキップします: {pub_date!r} ({e})")
+        return False
+
+    target_day = int(m.group(1))
+    published_jst = published_at.astimezone(_JST)
+    target_date = (published_jst + timedelta(days=1)).date()
+    if target_date.day != target_day:
+        # 「あす(N)日」が公開日の翌日と一致しない = この表現を誤読している
+        # 可能性があるため、安全側に倒して通知する
+        return False
+
+    return datetime.now(_JST).date() > target_date
+
+
 def is_false_area_match(
     title: str, area_words: list[str], false_match_words: list[str]
 ) -> bool:
@@ -278,6 +324,22 @@ def process_feed(feed: dict) -> None:
             ctx,
             f"公開日が{stale_days}日以上前の記事を{len(stale_ids)}件、"
             "通知せず既読化しました",
+        )
+    unread_new = [a for a in unread_new if a.id not in read_ids]
+
+    # 2.52 タイトルの「あす22日は」等の相対日付表現が指す日付がすでに過ぎている記事は、
+    #      通知しても内容が古く誤解を招くだけなので、既読化のみして通知しない。
+    #      詳細は is_stale_relative_date_title 参照。
+    stale_relative_date_ids = [
+        a.id for a in unread_new if is_stale_relative_date_title(a.title, a.pub_date, ctx)
+    ]
+    if stale_relative_date_ids:
+        state_manager.append_read_ids(feed_id, stale_relative_date_ids)
+        read_ids = read_ids | set(stale_relative_date_ids)
+        logger.info(
+            ctx,
+            f"「あす(N)日は」等の相対日付表現が指す日付を過ぎた記事を"
+            f"{len(stale_relative_date_ids)}件、通知せず既読化しました",
         )
     unread_new = [a for a in unread_new if a.id not in read_ids]
 

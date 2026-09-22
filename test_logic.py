@@ -1261,6 +1261,97 @@ def test_area_false_match_skips_broadcaster_name_only_articles():
                 os.remove(p_)
 
 
+def test_stale_relative_date_title_skips_outdated_weather_forecast():
+    """
+    回帰テスト: 「あす22日は台風が離れる…」のようなタイトルの記事が、
+    通知が遅れて実際には22日をとっくに過ぎてから配信された場合、
+    古い予報として通知せず既読化のみされることを確認する
+    (実際に21日夜配信の記事が23日朝になって通知されてしまった事例)。
+    """
+    from datetime import datetime, timedelta, timezone
+    from email.utils import format_datetime
+
+    import notifier
+    import state_manager
+
+    # 単体判定: 公開日の翌々日以降に処理される(=「あす」が指す日をすでに過ぎている)場合は古いと判定する
+    published_2days_ago_dt = datetime.now(timezone.utc) - timedelta(days=2)
+    published_2days_ago = format_datetime(published_2days_ago_dt)
+    target_day = (published_2days_ago_dt.astimezone(main._JST) + timedelta(days=1)).day
+    title = f"【蓬莱さんの近畿の天気】あす{target_day}日は台風が離れる晴れてさわやかな陽気に - 日テレNEWS NNN"
+    assert main.is_stale_relative_date_title(title, published_2days_ago, "test") is True
+
+    # 公開直後(まだ「あす」が指す日になっていない)なら古いと判定しない
+    published_now = format_datetime(datetime.now(timezone.utc))
+    tomorrow_day = (datetime.now(timezone.utc).astimezone(main._JST) + timedelta(days=1)).day
+    fresh_title = f"あす{tomorrow_day}日は晴れ"
+    assert main.is_stale_relative_date_title(fresh_title, published_now, "test") is False
+
+    # 相対日付表現が無いタイトルは対象外(常にFalse)
+    assert main.is_stale_relative_date_title("大雨、死者７人・不明５人に", published_2days_ago, "test") is False
+
+    # pub_date が壊れている/無い場合は安全側に倒して通知する(False)
+    assert main.is_stale_relative_date_title("あす22日は晴れ", "", "test") is False
+    assert main.is_stale_relative_date_title("あす22日は晴れ", "不正な日付", "test") is False
+
+    print("OK: test_stale_relative_date_title (単体判定)")
+
+    # process_feed を通した end-to-end 確認
+    feed_id = "test_stale_relative_date"
+    feed = {
+        "id": feed_id,
+        "name": "自然災害",
+        "url": "https://example.invalid/rss",
+        "webhook_env": "DUMMY_WEBHOOK_ENV",
+        "dedup_first_n": 0,
+    }
+    paths = [
+        state_manager._read_path(feed_id),
+        state_manager._queue_path(feed_id),
+        dedup._clusters_path(feed_id),
+    ]
+
+    old_stale_title = f"【蓬莱さんの近畿の天気】あす{target_day}日は台風が離れる晴れてさわやかな陽気に - 日テレNEWS NNN"
+    articles = [
+        # 2日前に公開され、「あす」が指す日をすでに過ぎている → 通知しない
+        rss.Article(id="w1", title=old_stale_title, link="https://example.com/w1", pub_date=published_2days_ago),
+        # 通常の災害記事(相対日付表現なし) → 通知する
+        rss.Article(id="w2", title="大雨、死者７人・不明５人に - 東大阪経済新聞", link="https://example.com/w2", pub_date=published_2days_ago),
+    ]
+
+    sent_ids = []
+    original_fetch = rss.fetch_articles
+    original_send = notifier.send_articles
+    original_error = notifier.send_error
+
+    def fake_send_articles(webhook_env, feed_name, arts, max_count):
+        delivered = arts[:max_count]
+        sent_ids.extend(a["id"] for a in delivered)
+        return delivered
+
+    try:
+        for p_ in paths:
+            if os.path.exists(p_):
+                os.remove(p_)
+        rss.fetch_articles = lambda url: articles
+        notifier.send_articles = fake_send_articles
+        notifier.send_error = lambda *a, **k: None
+
+        main.process_feed(feed)
+        assert "w1" not in sent_ids, f"古い相対日付の記事が通知された: {sent_ids}"
+        assert set(sent_ids) == {"w2"}, sent_ids
+        # 通知しなかった記事も既読化されていること(毎回判定し直さないため)
+        assert set(state_manager.load_read_ids(feed_id)) == {"w1", "w2"}
+        print("OK: test_stale_relative_date_title (process_feed経由で古い予報は既読化のみ)")
+    finally:
+        rss.fetch_articles = original_fetch
+        notifier.send_articles = original_send
+        notifier.send_error = original_error
+        for p_ in paths:
+            if os.path.exists(p_):
+                os.remove(p_)
+
+
 if __name__ == "__main__":
     test_parse_success()
     test_parse_no_channel_raises()
@@ -1291,4 +1382,5 @@ if __name__ == "__main__":
     test_rss_retries_on_temporary_failure()
     test_exclude_words_skips_articles_but_marks_them_read()
     test_area_false_match_skips_broadcaster_name_only_articles()
+    test_stale_relative_date_title_skips_outdated_weather_forecast()
     print("\n全テスト成功")
