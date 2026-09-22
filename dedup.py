@@ -120,12 +120,23 @@ def save_clusters(feed_id: str, clusters: list[dict]) -> None:
         f.write("\n")
 
 
-def normalize_title(title: str) -> str:
+def normalize_title(title: str, ignore_words: "list[str] | tuple[str, ...]" = ()) -> str:
     """
     タイトルから、話題比較の邪魔になる部分を取り除く。
       - 先頭の【速報】【現場報告】(1面)等のタグ
       - 末尾の " - 配信元メディア名"
       - 空白・句読点・記号
+      - ignore_words に指定された語(フィード名=検索キーワードなど)
+
+    ignore_words について:
+      このシステムは「大東市」のような検索キーワードでRSSを引いているため、
+      そのフィードの記事は**全件がその語を含む**。つまりこの語は話題を区別する
+      情報を一切持たないのに、類似度(bigram一致率)は確実に押し上げてしまう。
+      実測では「大東市で火災 住宅1棟全焼」と「大東市で交通事故 2人けが」という
+      まったく無関係な2記事が、地名が共通というだけで類似度0.273に達し、
+      同じ話題と誤判定されて片方が通知されない状態になっていた。
+      この語を先に取り除くと同じ組み合わせが0.000まで下がり、
+      本当に同じ話題の記事(0.35〜0.95)との差がはっきりする。
     """
     t = title
     # 末尾の "- メディア名" を除去 (最後の " - " 以降を落とす)
@@ -138,7 +149,18 @@ def normalize_title(title: str) -> str:
             break
         t = new_t
     t = _STRIP_CHARS_RE.sub("", t)
-    return t
+
+    # 記号を落とした後に除去する。タイトル側が「大阪府大東市」「大阪・大東市」の
+    # ように書かれていても、記号除去後なら同じ表記に揃って一致するため。
+    stripped = t
+    for word in ignore_words:
+        normalized_word = _STRIP_CHARS_RE.sub("", word)
+        if normalized_word:
+            stripped = stripped.replace(normalized_word, "")
+
+    # 除去した結果タイトルが空になる場合(タイトルが検索キーワードそのものだった等)は、
+    # 比較材料が無くなってしまうので除去前のものを使う
+    return stripped if stripped else t
 
 
 def _bigrams(s: str) -> set:
@@ -201,6 +223,7 @@ def classify_articles(
     batch_cooldown_minutes: int = DEFAULT_BATCH_COOLDOWN_MINUTES,
     cluster_max_age_hours: int = DEFAULT_CLUSTER_MAX_AGE_HOURS,
     old_ids: set[str] | None = None,
+    ignore_words: "list[str] | tuple[str, ...]" = (),
 ) -> tuple[list[dict], set[str]]:
     """
     未通知記事(古い順)を「同じ話題」でクラスタリングし、通知すべきものだけを返す
@@ -208,6 +231,8 @@ def classify_articles(
 
     articles: [{"id", "title", "link", "pub_date"}, ...] 古い順
     old_ids : 「配信から時間が経っている記事」のID集合(main.py の fresh_hours 判定結果)
+    ignore_words: 類似度の計算から除外する語(フィード名=検索キーワードなど)。
+                  詳細は normalize_title のdocstring参照
     戻り値: (to_notify, skip_ids)
       to_notify: 通知する記事のリスト(古い順、タイトルは一切書き換えない)
       skip_ids : 通知せず既読化だけする記事IDの集合
@@ -242,7 +267,7 @@ def classify_articles(
     skip_ids: set[str] = set()
 
     for a in articles:
-        norm = normalize_title(a["title"])
+        norm = normalize_title(a["title"], ignore_words)
 
         best_cluster = None
         best_ratio = 0.0

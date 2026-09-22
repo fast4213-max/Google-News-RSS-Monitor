@@ -81,6 +81,13 @@ def load_feeds() -> list[dict]:
             raise RuntimeError(
                 f"feeds.json の 'dedup_similarity_threshold' は0〜1の数値で指定してください: {feed}"
             )
+        ignore_words = feed.get("dedup_ignore_words")
+        if ignore_words is not None and not (
+            isinstance(ignore_words, list) and all(isinstance(w, str) for w in ignore_words)
+        ):
+            raise RuntimeError(
+                f"feeds.json の 'dedup_ignore_words' は文字列の配列で指定してください: {feed}"
+            )
     return feeds
 
 
@@ -146,6 +153,12 @@ def process_feed(feed: dict) -> None:
     dedup_batch_cooldown_minutes = feed.get(
         "dedup_batch_cooldown_minutes", DEFAULT_DEDUP_BATCH_COOLDOWN_MINUTES
     )
+    # 類似度の計算から除外する語。
+    # フィード名(=検索キーワード。例「大東市」)は、そのフィードの記事全件に必ず含まれるため
+    # 話題を区別する情報を持たない。にも関わらず類似度は押し上げてしまい、無関係な記事同士が
+    # 同じ話題と誤判定される原因になるので、常に除外する。
+    # feeds.json の "dedup_ignore_words" で、都道府県名など他の共通語も追加できる。
+    dedup_ignore_words = [feed_name] + list(feed.get("dedup_ignore_words", []))
     ctx = f"feed:{feed_id}"
 
     # 1. RSS取得・パース
@@ -213,6 +226,7 @@ def process_feed(feed: dict) -> None:
         similarity_threshold=dedup_similarity_threshold,
         batch_cooldown_minutes=dedup_batch_cooldown_minutes,
         old_ids=old_ids,
+        ignore_words=dedup_ignore_words,
     )
     if dedup_skip_ids:
         # 記事の並び(古い順)を保ったまま既読化する

@@ -285,6 +285,131 @@ def test_similarity_threshold_reangled_followup_boundary():
             os.remove(path)
 
 
+def test_ignore_words_removes_feed_keyword():
+    """
+    フィード名(=検索キーワード)を類似度計算から除外することで、
+    「地名が共通なだけの無関係な記事」が同じ話題と誤判定されなくなることを確認する。
+
+    このシステムは「大東市」で検索したRSSを読むため、そのフィードの記事は全件が
+    「大東市」を含む。この語は話題を区別する情報を持たないのに類似度だけ押し上げる。
+    """
+    ignore = ["大東市"]
+
+    # (1) 共通点が地名だけの無関係な記事 → 除外後は類似度0になる
+    unrelated = [
+        ("大東市で火災 住宅1棟全焼 - A新聞", "大東市で交通事故 2人けが - B新聞"),
+        ("大東市で秋祭りが開催されました - A新聞", "大東市の市議会で予算案が可決 - B新聞"),
+    ]
+    for a, b in unrelated:
+        before = dedup._similarity(dedup.normalize_title(a), dedup.normalize_title(b))
+        after = dedup._similarity(
+            dedup.normalize_title(a, ignore), dedup.normalize_title(b, ignore)
+        )
+        assert before >= 0.12, f"除外前の類似度が想定より低い: {before}"
+        assert after == 0.0, f"地名除外後も類似度が残っている: {after} ({a} / {b})"
+    print("OK: test_ignore_words (地名だけが共通の無関係な記事は類似度0になる)")
+
+    # (2) 本当に同じ話題の記事は、除外後も閾値を十分上回ったままであること
+    same_topic = [
+        (
+            "スーパーで従業員刺される 80歳元夫を現行犯逮捕 大阪府大東市 - MBS",
+            "スーパーで「従業員刺された」と通報 女性けが 80歳男を殺人未遂容疑で逮捕 大阪・大東市 - Yahoo",
+        ),
+        (
+            "大東市長が新体育館の建設方針を表明 - A新聞",
+            "大東市の新体育館、建設方針を市長が表明 - B新聞",
+        ),
+    ]
+    for a, b in same_topic:
+        after = dedup._similarity(
+            dedup.normalize_title(a, ignore), dedup.normalize_title(b, ignore)
+        )
+        assert after >= dedup.DEFAULT_SIMILARITY_THRESHOLD, (
+            f"同じ話題なのに閾値を下回った: {after} ({a} / {b})"
+        )
+    print("OK: test_ignore_words (同じ話題の記事は除外後も閾値を上回る)")
+
+    # (3) 「大阪府大東市」「大阪・大東市」のような表記ゆれでも除去されること
+    #     (記号を落としてから除去しているため)
+    assert "大東市" not in dedup.normalize_title("大阪府大東市で火災 - A新聞", ignore)
+    assert "大東市" not in dedup.normalize_title("大阪・大東市で火災 - A新聞", ignore)
+    print("OK: test_ignore_words (表記ゆれがあっても除去される)")
+
+    # (4) 除去するとタイトルが空になる場合は、除去前のものを使って比較材料を残すこと
+    assert dedup.normalize_title("大東市 - A新聞", ignore) == "大東市"
+    print("OK: test_ignore_words (タイトルが空になる場合は除去前に戻す)")
+
+
+def test_ignore_words_end_to_end_keeps_topics_separate():
+    """
+    classify_articles 経由で、地名だけが共通の無関係な2記事が
+    別々の話題として扱われ、どちらも通知されることを確認する
+    (以前は片方が「同じ話題の重複」とみなされて通知されなかった)。
+    """
+    feed_id = "test_ignore_words_e2e"
+    path = dedup._clusters_path(feed_id)
+    if os.path.exists(path):
+        os.remove(path)
+
+    from datetime import datetime, timezone
+
+    now = datetime(2026, 9, 22, 3, 0, tzinfo=timezone.utc)
+    articles = [
+        {"id": "w1", "title": "大東市で火災 住宅1棟全焼 - A新聞", "link": "https://example.com/w1", "pub_date": ""},
+        {"id": "w2", "title": "大東市で交通事故 2人けが - B新聞", "link": "https://example.com/w2", "pub_date": ""},
+    ]
+    try:
+        # 地名を除外しない場合: 類似度0.273で同じ話題と誤判定される
+        to_notify, skip_ids = dedup.classify_articles(feed_id, articles, now=now)
+        assert skip_ids == set() or len(to_notify) == 2, (to_notify, skip_ids)
+        # first_n=3 の範囲内なので通知自体はされるが、同じクラスタに入ってしまう
+        assert len(dedup.load_clusters(feed_id)) == 1, "地名除外なしでは1クラスタに誤統合される"
+
+        os.remove(path)
+
+        # 地名を除外した場合: 別々のクラスタになる
+        to_notify, skip_ids = dedup.classify_articles(
+            feed_id, articles, now=now, ignore_words=["大東市"]
+        )
+        assert {a["id"] for a in to_notify} == {"w1", "w2"}, to_notify
+        assert skip_ids == set(), skip_ids
+        assert len(dedup.load_clusters(feed_id)) == 2, "地名除外後は別クラスタになるべき"
+        print("OK: test_ignore_words_end_to_end (無関係な2記事が別の話題として扱われる)")
+    finally:
+        if os.path.exists(path):
+            os.remove(path)
+
+
+def test_ignore_words_known_limitation():
+    """
+    既知の限界を記録しておくテスト(挙動が変わったら気づけるように)。
+
+    地名の除外で解決するのは「共通点が検索キーワードだけ」のケース。
+    文の言い回しそのものが似ている無関係な記事は、地名を除いても
+    類似度が残り、依然として同じ話題と誤判定される。
+    bigram類似度だけで区別できる限界であり、気になる場合は feeds.json の
+    dedup_ignore_words に共通語を足すか、閾値を上げて対処する。
+    """
+    ignore = ["大東市"]
+    a = "大東市長が記者会見で表明 新体育館の建設へ - A新聞"
+    b = "大東市長が記者会見で陳謝 職員の不祥事を受けて - B新聞"
+    after = dedup._similarity(dedup.normalize_title(a, ignore), dedup.normalize_title(b, ignore))
+    assert after >= dedup.DEFAULT_SIMILARITY_THRESHOLD, (
+        f"限界ケースの挙動が変わった(改善した?): {after}"
+    )
+
+    # dedup_ignore_words に共通語を足せば区別できるようになること
+    ignore2 = ["大東市", "市長", "記者会見"]
+    after2 = dedup._similarity(dedup.normalize_title(a, ignore2), dedup.normalize_title(b, ignore2))
+    assert after2 < dedup.DEFAULT_SIMILARITY_THRESHOLD, (
+        f"共通語を足しても区別できない: {after2}"
+    )
+    print(
+        f"OK: test_ignore_words_known_limitation "
+        f"(言い回しが似た無関係記事は地名除外だけでは残る={after:.2f} / 共通語追加で解消={after2:.2f})"
+    )
+
+
 def test_old_article_only_skipped_when_topic_already_notified():
     """
     公開から時間が経った記事(old_ids)の扱い:
@@ -641,6 +766,9 @@ if __name__ == "__main__":
     test_dedup_clustering()
     test_batch_cooldown_opens_next_wave()
     test_similarity_threshold_reangled_followup_boundary()
+    test_ignore_words_removes_feed_keyword()
+    test_ignore_words_end_to_end_keeps_topics_separate()
+    test_ignore_words_known_limitation()
     test_edited_article_resurfacing_as_old_is_skipped()
     test_old_article_only_skipped_when_topic_already_notified()
     test_read_ids_order_is_preserved()
