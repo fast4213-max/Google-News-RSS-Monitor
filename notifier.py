@@ -11,8 +11,10 @@ Discord Webhook 通知処理。
   - エラー通知は通常通知と見分けやすいよう先頭に絵文字を付ける。
   - Webhook URL はフィードごとに別チャンネルへ送れるよう、呼び出し元から
     「環境変数名」を受け取ってその都度読み出す方式にしている(コードに直書きしない)。
-  - フィードを特定できない/共通のエラー(feeds.json自体が壊れている等)は、
-    共通のシステム通知用Webhook (DISCORD_WEBHOOK_URL_SYSTEM) に送る。
+  - エラー・システム通知は、原因のフィードに関わらず**常に**共通のシステム通知用
+    Webhook (DISCORD_WEBHOOK_URL_SYSTEM) に送る。各フィード専用チャンネル(本チャンネル)
+    には記事の通知だけが届くようにし、チャンネルを後から増やしてもエラー監視は
+    システム通知チャンネル1箇所を見ればよい状態を保つ。
 """
 
 import json
@@ -165,24 +167,22 @@ def send_articles(webhook_env: str, feed_name: str, articles: list, max_count: i
     return sent
 
 
-def send_error(context: str, message: str, webhook_env: str | None = None) -> None:
+def send_error(context: str, message: str) -> None:
     """
     処理エラーをDiscordに通知する。
     タイトル通知と見分けやすいよう絵文字と context を先頭に出す。
 
-    webhook_env を指定すれば「そのフィード専用チャンネル」にエラーを送る
-    (例: 大東市フィードのRSS取得失敗 → 大東市チャンネルにエラーが出る)。
-    webhook_env を指定しない(=フィードを特定できない/フィード横断のエラー)場合は、
-    共通のシステム通知用Webhook (DISCORD_WEBHOOK_URL_SYSTEM) に送る。
+    どのフィードで起きたエラーであっても、常に共通のシステム通知用Webhook
+    (DISCORD_WEBHOOK_URL_SYSTEM) に送る。各フィード専用チャンネル(本チャンネル)には
+    記事の通知だけを流し、エラー監視はシステム通知チャンネル1箇所に一元化するため。
 
     Discord送信自体が失敗した場合はActionsログにのみ残す(無限ループ防止のため再送しない)。
     """
-    target_env = webhook_env or SYSTEM_WEBHOOK_ENV
     content = f"⚠️ **RSS通知エラー** [{context}]\n```\n{message[:1800]}\n```"
     try:
-        _post(target_env, {"content": content})
+        _post(SYSTEM_WEBHOOK_ENV, {"content": content})
     except Exception as e:
         logger.error(
             _CONTEXT,
-            f"エラー通知そのものの送信にも失敗しました (webhook_env={target_env}): {e}",
+            f"エラー通知そのものの送信にも失敗しました (webhook_env={SYSTEM_WEBHOOK_ENV}): {e}",
         )

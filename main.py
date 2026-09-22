@@ -42,11 +42,11 @@ DEFAULT_FRESH_HOURS = 3          # 記事の公開日がこれより古ければ
 # (例: 話題が広く更新の速い「中東情勢」だけ上限を増やす、期間を短くする、など)
 
 # 同一話題(複数社が同じ出来事を別記事で配信したもの)をまとめるクラスタリングのデフォルト値。
-# いずれも feeds.json 側で "dedup_first_n" / "dedup_unknown_source_limit" /
-# "dedup_similarity_threshold" を指定すればフィードごとに上書きできる。
+# いずれも feeds.json 側で "dedup_first_n" / "dedup_similarity_threshold" /
+# "dedup_batch_cooldown_minutes" を指定すればフィードごとに上書きできる。
 DEFAULT_DEDUP_FIRST_N = dedup.DEFAULT_FIRST_N
-DEFAULT_DEDUP_UNKNOWN_SOURCE_LIMIT = dedup.DEFAULT_UNKNOWN_SOURCE_LIMIT
 DEFAULT_DEDUP_SIMILARITY_THRESHOLD = dedup.DEFAULT_SIMILARITY_THRESHOLD
+DEFAULT_DEDUP_BATCH_COOLDOWN_MINUTES = dedup.DEFAULT_BATCH_COOLDOWN_MINUTES
 
 FEEDS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "feeds.json")
 
@@ -68,7 +68,7 @@ def load_feeds() -> list[dict]:
             "stale_days",
             "fresh_hours",
             "dedup_first_n",
-            "dedup_unknown_source_limit",
+            "dedup_batch_cooldown_minutes",
         ):
             if optional_key in feed and not isinstance(feed[optional_key], int):
                 raise RuntimeError(
@@ -138,11 +138,11 @@ def process_feed(feed: dict) -> None:
     stale_days = feed.get("stale_days", DEFAULT_STALE_ARTICLE_DAYS)
     fresh_hours = feed.get("fresh_hours", DEFAULT_FRESH_HOURS)
     dedup_first_n = feed.get("dedup_first_n", DEFAULT_DEDUP_FIRST_N)
-    dedup_unknown_source_limit = feed.get(
-        "dedup_unknown_source_limit", DEFAULT_DEDUP_UNKNOWN_SOURCE_LIMIT
-    )
     dedup_similarity_threshold = feed.get(
         "dedup_similarity_threshold", DEFAULT_DEDUP_SIMILARITY_THRESHOLD
+    )
+    dedup_batch_cooldown_minutes = feed.get(
+        "dedup_batch_cooldown_minutes", DEFAULT_DEDUP_BATCH_COOLDOWN_MINUTES
     )
     ctx = f"feed:{feed_id}"
 
@@ -151,11 +151,11 @@ def process_feed(feed: dict) -> None:
         articles = rss.fetch_articles(feed_url)
     except (rss.RssFetchError, rss.RssParseError) as e:
         msg = logger.error(ctx, f"RSS取得/解析に失敗しました: {e}", exc=e)
-        notifier.send_error(ctx, msg, webhook_env=webhook_env)
+        notifier.send_error(ctx, msg)
         return
     except Exception as e:
         msg = logger.error(ctx, f"想定外のエラー(RSS処理): {e}", exc=e)
-        notifier.send_error(ctx, msg, webhook_env=webhook_env)
+        notifier.send_error(ctx, msg)
         return
 
     logger.info(ctx, f"RSS取得成功: {len(articles)}件")
@@ -195,8 +195,8 @@ def process_feed(feed: dict) -> None:
         feed_id,
         unread_new_dicts_raw,
         first_n=dedup_first_n,
-        unknown_source_limit=dedup_unknown_source_limit,
         similarity_threshold=dedup_similarity_threshold,
+        batch_cooldown_minutes=dedup_batch_cooldown_minutes,
         old_ids=old_ids,
     )
     if dedup_skip_ids:
@@ -239,7 +239,7 @@ def process_feed(feed: dict) -> None:
         sent = notifier.send_articles(webhook_env, feed_name, pending, max_per_run)
     except Exception as e:
         msg = logger.error(ctx, f"Discord送信処理そのものが異常終了しました: {e}", exc=e)
-        notifier.send_error(ctx, msg, webhook_env=webhook_env)
+        notifier.send_error(ctx, msg)
         # 状態は変更せず次回に持ち越す(pendingをそのままqueueに保存)
         state_manager.save_queue(feed_id, pending)
         return
@@ -286,7 +286,7 @@ def main() -> None:
             msg = logger.error(
                 _CONTEXT, f"フィード処理で想定外のエラー (id={feed.get('id')}): {e}", exc=e
             )
-            notifier.send_error(f"feed:{feed.get('id')}", msg, webhook_env=feed.get("webhook_env"))
+            notifier.send_error(f"feed:{feed.get('id')}", msg)
 
     logger.info(_CONTEXT, "===== 通常実行 終了 =====")
 

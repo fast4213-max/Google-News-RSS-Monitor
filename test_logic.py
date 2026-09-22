@@ -104,9 +104,8 @@ def test_diff_and_queue_logic():
 
 def test_dedup_clustering():
     """
-    同じ出来事を複数社が別記事(別guid)で配信した場合に、最速3件はそのまま通知され、
-    4件目以降は「同じ配信元が前回より新しいpubDateで改めて報じた場合」だけ
-    続報として通知されることを確認する。初見の配信元は4件目以降だと通知されない。
+    同じ出来事を複数社が別記事(別guid)で配信した場合に、最速3件(1波目)は
+    そのまま通知され、無関係な別の話題は別クラスタとして独立して通知されることを確認する。
     """
     feed_id = "test_dedup_logic"
     path = dedup._clusters_path(feed_id)
@@ -141,46 +140,75 @@ def test_dedup_clustering():
         assert skip_ids == set(), f"間引かれる想定と違う: {skip_ids}"
         print("OK: test_dedup_clustering (最速3件[id0,1,2]はそのまま通知、別話題[id3]も独立して通知)")
 
-        # 4件目: 最速3件に含まれない初見の配信元(C新聞) → 通知しない
-        unknown_source = {
-            "id": "id_unknown_source",
+        # 4件目: 1波目(3件)がまだ埋まった直後で、pubDate差・壁時計差ともに30分未満 → 通知しない
+        too_soon = {
+            "id": "id_too_soon",
             "title": "スーパーで女性刺され死亡 元夫を逮捕 大阪・大東市 - C新聞",
-            "link": "https://example.com/unknown_source",
-            "pub_date": (base + timedelta(minutes=30)).strftime("%a, %d %b %Y %H:%M:%S GMT"),
+            "link": "https://example.com/too_soon",
+            "pub_date": (base + timedelta(minutes=20)).strftime("%a, %d %b %Y %H:%M:%S GMT"),
         }
         to_notify2, skip_ids2 = dedup.classify_articles(
-            feed_id, [unknown_source], now=base + timedelta(minutes=30)
+            feed_id, [too_soon], now=base + timedelta(minutes=20)
         )
-        assert to_notify2 == [] and skip_ids2 == {"id_unknown_source"}
-        print("OK: test_dedup_clustering (最速3件に無い初見の配信元は4件目以降だと通知しない)")
+        assert to_notify2 == [] and skip_ids2 == {"id_too_soon"}
+        print("OK: test_dedup_clustering (クールダウン未達の続報は通知しない)")
+    finally:
+        if os.path.exists(path):
+            os.remove(path)
 
-        # 5件目: 最速3件に含まれるMBSニュースが、前回(id0)より新しいpubDateで改めて報道
-        # → 続報として通知される(壁時計の待機時間は不要、pubDateが新しければ即通知)
-        mbs_followup = {
-            "id": "id_mbs_followup",
-            "title": "スーパーで女性死亡 殺人容疑に切り替え 元夫を再逮捕 大阪・大東市 - MBSニュース",
-            "link": "https://example.com/mbs_followup",
-            "pub_date": (base + timedelta(minutes=5)).strftime("%a, %d %b %Y %H:%M:%S GMT"),
+
+def test_batch_cooldown_opens_next_wave():
+    """
+    1波目(最速3件)が埋まった後、2波目は
+      (a) pubDateが1波目の最新記事から30分以上後
+      (b) 壁時計で前回通知から30分以上経過
+    の両方を満たした記事だけを、再び最速3件まとめて通知することを確認する。
+    """
+    feed_id = "test_batch_cooldown"
+    path = dedup._clusters_path(feed_id)
+    if os.path.exists(path):
+        os.remove(path)
+
+    from datetime import datetime, timedelta, timezone
+
+    base = datetime(2026, 9, 17, 3, 0, tzinfo=timezone.utc)
+
+    def article(i, title, minutes):
+        return {
+            "id": f"b{i}",
+            "title": title,
+            "link": f"https://example.com/b{i}",
+            "pub_date": (base + timedelta(minutes=minutes)).strftime("%a, %d %b %Y %H:%M:%S GMT"),
         }
+
+    try:
+        titles = [
+            "スーパーで従業員刺される「叫びながら近づいて刺した」80歳元夫を現行犯逮捕 大阪府大東市 - MBSニュース",
+            "女性従業員は搬送先の病院で死亡 スーパーで従業員が刃物で刺された事件 80歳元夫を現行犯逮捕 大阪府大東市 - TBS NEWS DIG",
+            "スーパーで「従業員刺された」と通報 女性けが 搬送時意識あり 80歳男を殺人未遂容疑で逮捕 大阪・大東市 - Yahoo!ニュース",
+        ]
+        batch1 = [article(i, t, i * 3) for i, t in enumerate(titles)]  # pubDateは0分,3分,6分
+        to_notify, skip_ids = dedup.classify_articles(feed_id, batch1, now=base + timedelta(minutes=6))
+        assert {a["id"] for a in to_notify} == {"b0", "b1", "b2"}
+        assert skip_ids == set()
+        print("OK: test_batch_cooldown (1波目=最速3件は即通知)")
+
+        # 4件目: pubDateは1波目最新(6分)から20分後、壁時計も26分経過 → まだ30分ゲート未達
+        too_soon = article(3, "スーパーで女性死亡 殺人容疑に切り替え 元夫を再逮捕 大阪・大東市 - C新聞", 26)
+        to_notify2, skip_ids2 = dedup.classify_articles(
+            feed_id, [too_soon], now=base + timedelta(minutes=26)
+        )
+        assert to_notify2 == [] and skip_ids2 == {"b3"}
+        print("OK: test_batch_cooldown (30分ゲート未達の記事は通知しない)")
+
+        # 5件目: pubDateが1波目最新から34分後、壁時計も34分経過 → 両ゲートを満たし2波目として通知
+        ok_followup = article(4, "スーパーで女性死亡 殺人容疑に切り替え 元夫を再逮捕 大阪・大東市 - D新聞", 40)
         to_notify3, skip_ids3 = dedup.classify_articles(
-            feed_id, [mbs_followup], now=base + timedelta(minutes=5)
+            feed_id, [ok_followup], now=base + timedelta(minutes=40)
         )
-        assert {a["id"] for a in to_notify3} == {"id_mbs_followup"}
+        assert {a["id"] for a in to_notify3} == {"b4"}
         assert skip_ids3 == set()
-        print("OK: test_dedup_clustering (最速3件に含まれる配信元の新しいpubDateでの続報は即通知)")
-
-        # 6件目: MBSニュースが同じか前回より古い/同時刻のpubDateで再度出現 → 続報とはみなさない
-        mbs_duplicate = {
-            "id": "id_mbs_duplicate",
-            "title": "スーパーで女性死亡 殺人容疑に切り替え 元夫を再逮捕 大阪・大東市 - MBSニュース",
-            "link": "https://example.com/mbs_duplicate",
-            "pub_date": (base + timedelta(minutes=5)).strftime("%a, %d %b %Y %H:%M:%S GMT"),
-        }
-        to_notify4, skip_ids4 = dedup.classify_articles(
-            feed_id, [mbs_duplicate], now=base + timedelta(minutes=5)
-        )
-        assert to_notify4 == [] and skip_ids4 == {"id_mbs_duplicate"}
-        print("OK: test_dedup_clustering (同じ配信元でもpubDateが前回以下なら続報とみなさない)")
+        print("OK: test_batch_cooldown (両ゲートを満たすと2波目として通知される)")
     finally:
         if os.path.exists(path):
             os.remove(path)
@@ -238,69 +266,6 @@ def test_similarity_threshold_catches_reangled_followup():
             os.remove(path)
 
 
-def test_unknown_source_has_separate_quota():
-    """
-    配信元が特定できない記事(タイトルに「- 媒体名」表記が無い)は、配信元が
-    特定できる記事の最速枠(dedup_first_n)とは別の枠(dedup_unknown_source_limit)で
-    カウントされることを確認する。
-
-    1件目が配信元不明でも、それによって「配信元が分かる記事の最速3件」の
-    確保が妨げられない(=結果的に配信元不明1件+配信元あり3件=4件通知される)。
-    """
-    feed_id = "test_unknown_source_quota"
-    path = dedup._clusters_path(feed_id)
-    if os.path.exists(path):
-        os.remove(path)
-
-    from datetime import datetime, timedelta, timezone
-
-    base = datetime(2026, 9, 18, 0, 0, tzinfo=timezone.utc)
-
-    def article(i, title, minutes):
-        return {
-            "id": f"u{i}",
-            "title": title,
-            "link": f"https://example.com/u{i}",
-            "pub_date": (base + timedelta(minutes=minutes)).strftime("%a, %d %b %Y %H:%M:%S GMT"),
-        }
-
-    try:
-        # 1件目: 配信元不明(「- 媒体名」表記なし)、2〜4件目: 配信元あり
-        articles = [
-            article(0, "スーパーで男性刺される 大東市", 0),
-            article(1, "スーパーで男性刺される 大東市 - A新聞", 1),
-            article(2, "スーパーで男性刺される 大東市 - B新聞", 2),
-            article(3, "スーパーで男性刺される 大東市 - C新聞", 3),
-        ]
-        to_notify, skip_ids = dedup.classify_articles(feed_id, articles, now=base)
-        notified_ids = {a["id"] for a in to_notify}
-        assert notified_ids == {"u0", "u1", "u2", "u3"}, notified_ids
-        assert skip_ids == set()
-        print("OK: test_unknown_source_quota (配信元不明1件が最速3件の枠を消費しない)")
-
-        # 5件目: さらに配信元不明の記事(unknown_source_limit=3のデフォルトなら、
-        # まだ1件しか使っていないので通知される)
-        more_unknown = article(4, "スーパーで男性刺される 大東市 続報", 4)
-        to_notify2, skip_ids2 = dedup.classify_articles(
-            feed_id, [more_unknown], now=base + timedelta(minutes=4)
-        )
-        assert {a["id"] for a in to_notify2} == {"u4"}
-        print("OK: test_unknown_source_quota (配信元不明の別枠がまだ余っていれば通知される)")
-
-        # 6,7件目: 配信元不明をさらに2件追加 → 3件使い切ったところで打ち止め
-        unknown6 = article(5, "スーパーで男性刺される 大東市 続報2", 5)
-        unknown7 = article(6, "スーパーで男性刺される 大東市 続報3", 6)
-        to_notify3, skip_ids3 = dedup.classify_articles(
-            feed_id, [unknown6, unknown7], now=base + timedelta(minutes=6)
-        )
-        assert {a["id"] for a in to_notify3} == {"u5"}, to_notify3
-        assert skip_ids3 == {"u6"}
-        print("OK: test_unknown_source_quota (配信元不明の別枠も上限に達すれば間引かれる)")
-    finally:
-        if os.path.exists(path):
-            os.remove(path)
-
-
 def test_old_article_only_skipped_when_topic_already_notified():
     """
     公開から時間が経った記事(old_ids)の扱い:
@@ -343,6 +308,55 @@ def test_old_article_only_skipped_when_topic_already_notified():
         assert notified_ids == {"old_new_topic"}, f"通知される想定と違う: {notified_ids}"
         assert skip_ids == {"old_followup"}, f"間引かれる想定と違う: {skip_ids}"
         print("OK: test_old_article (古い後追いは間引き、古くても初めての話題は通知)")
+    finally:
+        if os.path.exists(path):
+            os.remove(path)
+
+
+def test_edited_article_resurfacing_as_old_is_skipped():
+    """
+    実際にあった事例の再現テスト: Googleニュース側で既存記事のpubDateだけ更新されて
+    再配信され、タイトルの言い回しがわずかに変わった結果、旧クラスタとマッチせず
+    「初めての話題」として誤判定され、翌日になって古い内容が通知されてしまっていた。
+    閾値を緩めた(0.12)ことで、こうした再配信記事も既存クラスタに正しくマッチし、
+    old_ids(fresh_hours超過)の判定で通知されずに間引かれることを確認する。
+    """
+    feed_id = "test_edited_resurface"
+    path = dedup._clusters_path(feed_id)
+    if os.path.exists(path):
+        os.remove(path)
+
+    from datetime import datetime, timezone
+
+    now = datetime(2026, 9, 22, 8, 10, tzinfo=timezone.utc)
+
+    def article(article_id, title, pub_date=""):
+        return {"id": article_id, "title": title, "link": f"https://example.com/{article_id}", "pub_date": pub_date}
+
+    try:
+        dedup.classify_articles(
+            feed_id,
+            [article(
+                "seed",
+                "【大東市】9月21日は何の日？ポップタウン住道オペラパークで9月23日には"
+                "「地域包括フェスティバル」を開催！ - 地域ニュースサイト号外NET",
+                "Mon, 21 Sep 2026 22:21:46 GMT",
+            )],
+            now=now,
+        )
+
+        # 編集によりpubDateだけ更新されたほぼ同一記事(=old_ids判定される)
+        resurfaced = article(
+            "resurfaced",
+            "【大東市】9月21日は何の日？ポップタウン住道オペラパークで9月23日には"
+            "「地域包括フェスティバル」を開催！(更新) - 地域ニュースサイト号外NET",
+            "Tue, 22 Sep 2026 08:10:00 GMT",
+        )
+        to_notify, skip_ids = dedup.classify_articles(
+            feed_id, [resurfaced], now=now, old_ids={"resurfaced"}
+        )
+        assert to_notify == [] and skip_ids == {"resurfaced"}, (to_notify, skip_ids)
+        print("OK: test_edited_article_resurfacing (編集で再配信された古い記事は通知されない)")
     finally:
         if os.path.exists(path):
             os.remove(path)
@@ -466,8 +480,9 @@ if __name__ == "__main__":
     test_parse_not_xml_raises()
     test_diff_and_queue_logic()
     test_dedup_clustering()
+    test_batch_cooldown_opens_next_wave()
     test_similarity_threshold_catches_reangled_followup()
-    test_unknown_source_has_separate_quota()
+    test_edited_article_resurfacing_as_old_is_skipped()
     test_old_article_only_skipped_when_topic_already_notified()
     test_read_ids_order_is_preserved()
     test_load_queue_skips_malformed_items()

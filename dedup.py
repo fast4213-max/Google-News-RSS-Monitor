@@ -3,40 +3,35 @@
 同一ニュース（複数社が同じ出来事を別記事として配信したもの）をまとめて、
 Discordに同じ話題の記事が延々と流れ続けるのを防ぐための「話題クラスタリング」処理。
 
-方針:
+方針(バッチ+クールダウン方式):
   - Googleニュースの検索RSSは、同じ出来事について各社(産経/毎日/Yahoo!ニュース等)が
     それぞれ別記事(別guid)を出すため、そのまま通知すると同じ話題が何件も並んでしまう。
   - タイトルを正規化して類似度を比較し、「同じ話題」とみなせる記事をクラスタにまとめる。
-  - 1つの話題について、**配信元が特定できた記事は最初の dedup_first_n 件
-    （デフォルト3件、最速で報じた3社分）をそのまま通知する**。このとき各記事の
-    「配信元(タイトル末尾の " - 媒体名")」と「pubDate」をクラスタに記録しておく。
-      - 配信元の枠(dedup_first_n)は、**配信元が特定できた記事だけ**でカウントする。
-        配信元が特定できない記事は別枠(dedup_unknown_source_limit、デフォルト3件)で
-        カウントする。こうすることで、例えば1件目のタイトルが配信元不明な形式でも、
-        それに枠を1つ消費されず「配信元が分かる記事を3件」きちんと確保できる
-        (続報判定に使える配信元をなるべく多く残すため)。
-  - 4件目以降(続報)は、**同じ配信元が同じ話題について、前回より新しいpubDateで
-    改めて記事を出した場合にだけ**続報として通知する。
-      - 例: 最速3件が「MBSニュース・TBS NEWS DIG・Yahoo!ニュース」だったとして、
-        その後MBSニュースが同じ話題を新しいpubDateで更新した記事を出せば通知する。
-      - 同じ配信元が同じ内容を重複して出すことは基本的に無いため、
-        「同じ配信元 かつ pubDateが前回より新しい」は「本当に内容が更新された
-        (=続報)」とほぼ確実にみなせる、という考え方。壁時計での待機時間は設けない
-        (以前は「前回通知から90分経過で新しい枠が開く」方式だったが、これだと
-        本当の続報が来ても最大90分待たされる問題があったため廃止した)。
-      - 逆に、最速3件に含まれていない**初見の配信元**が4件目以降に出てきた場合は、
-        「本当に内容が更新された記事なのか、単なる他社の後追い(内容は同じ)なのか」を
-        区別する手段が無いため、安全側に倒して通知しない。
-      - 配信元が特定できない記事は、dedup_unknown_source_limit の枠が埋まって
-        いない間はそのまま通知し、埋まった後はそれ以上通知しない(続報判定の
-        しようが無いため)。
+  - 1つの話題は「波(バッチ)」単位で通知する。
+      - 1波目: 話題が初めて検知された時点で、最速 first_n 件（デフォルト3件）を
+        そのまま通知する。配信元は問わない(タイトル末尾に配信元表記が無くてもよい)。
+      - 2波目以降: 直前の波が first_n 件で埋まったあと、次の記事は
+        以下の**両方**を満たした場合にだけ「次の波」として通知する。
+          (a) その記事のpubDateが、直前の波の記事群のうち最も新しいpubDateから
+              batch_cooldown_minutes 分(デフォルト30分)以上後である
+          (b) 壁時計で、直前の波を通知した時刻から batch_cooldown_minutes 分
+              (デフォルト30分)以上経過している
+        満たさない記事は通知せず既読化だけする(=同じクラスタの次の記事が
+        条件を満たした時点で改めて波が開く。取りこぼした記事自体は再通知されない)。
+      - pubDateが空/パース不能などで判定できない場合は、見逃し防止のため
+        安全側(=通知する側)に倒す。
+    以前は「配信元が同じでpubDateが前回より新しければ即続報」という配信元ベースの
+    判定だったが、配信元表記が無い/変わるタイトルを取りこぼすリスクがあったため、
+    時間ベースの波状(バッチ)通知に統一した。
   - 「古い記事(old_ids)」の扱い:
     配信から fresh_hours 時間以上経った記事は、Googleニュースが後から
-    掘り起こしてきただけのことが多い。
+    掘り起こしてきただけのことが多い(既存記事がpubDateだけ更新されて
+    再配信されるケースを含む)。
       - すでに通知済みの話題(既存クラスタ)にマッチする古い記事 → 捨てる
-        (これにより、まだ notified_count が first_n に達していない状態でも、
-        古い記事が「最速枠」を不正に埋めてしまうのを防ぐ)
       - どのクラスタにもマッチしない古い記事(=初めての話題) → 通知する(見逃し防止)
+    類似度閾値(dedup_similarity_threshold)を緩めに設定しているのは、
+    言い回しが変わった再配信記事でも既存クラスタに正しくマッチさせ、
+    上記の「古い記事は捨てる」判定にきちんと乗せるためでもある。
   - クラスタ情報は state/clusters_<feed_id>.json に永続化する。
     dedup_cluster_max_age_hours より古いクラスタは自然に破棄され、
     無関係な後日の記事が誤って同じクラスタに混ざるのを防ぐ。
@@ -44,9 +39,6 @@ Discordに同じ話題の記事が延々と流れ続けるのを防ぐための�
 注意:
   - あくまで「タイトルの見た目の類似度」による簡易判定であり完全ではない。
     閾値(dedup_similarity_threshold)はfeeds.jsonでフィードごとに調整できる。
-  - 配信元名は、タイトル末尾の " - 媒体名" 表記から抜き出している。この表記が
-    無いタイトルは配信元が特定できず、続報判定の対象にはならない(=4件目以降は
-    通知されない)。
 """
 
 import json
@@ -57,13 +49,12 @@ from email.utils import parsedate_to_datetime
 
 STATE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "state")
 
-DEFAULT_FIRST_N = 3                  # 配信元が特定できた記事について、最速で無条件に通知する件数
-DEFAULT_UNKNOWN_SOURCE_LIMIT = 3     # 配信元が特定できない記事について、最速で無条件に通知する件数(別枠)
-DEFAULT_SIMILARITY_THRESHOLD = 0.17  # タイトル類似度(bigram Dice係数)がこれ以上なら同じ話題とみなす
-DEFAULT_CLUSTER_MAX_AGE_HOURS = 72   # これより古いクラスタは破棄する
-MAX_TITLES_PER_CLUSTER = 5           # クラスタ内に保持する正規化タイトルの上限(メモリ節約)
-MAX_SOURCES_PER_CLUSTER = 20         # クラスタ内に保持する配信元の上限(メモリ節約)
-MAX_CLUSTERS_PER_FEED = 300          # フィードあたりのクラスタ保持上限(古い順に間引く)
+DEFAULT_FIRST_N = 3                     # 1つの波(バッチ)で無条件に通知する件数
+DEFAULT_SIMILARITY_THRESHOLD = 0.12     # タイトル類似度(bigram Dice係数)がこれ以上なら同じ話題とみなす
+DEFAULT_BATCH_COOLDOWN_MINUTES = 30     # 次の波を開くまでのクールダウン(分)。pubDate差・壁時計差の両方に使う
+DEFAULT_CLUSTER_MAX_AGE_HOURS = 72      # これより古いクラスタは破棄する
+MAX_TITLES_PER_CLUSTER = 5              # クラスタ内に保持する正規化タイトルの上限(メモリ節約)
+MAX_CLUSTERS_PER_FEED = 300             # フィードあたりのクラスタ保持上限(古い順に間引く)
 
 _LEADING_TAG_RE = re.compile(r"^[\s]*[【\[（(][^】\]）)]{0,20}[】\]）)]\s*")
 _STRIP_CHARS_RE = re.compile(r"[\s　、。,.!?！？「」『』\"'\-ー・:：]")
@@ -102,23 +93,15 @@ def load_clusters(feed_id: str) -> list[dict]:
         titles = [t for t in c.get("titles", []) if isinstance(t, str) and t]
         if not titles:
             continue
-        notified_count = c.get("notified_count")
-        unknown_source_count = c.get("unknown_source_count")
-        raw_sources = c.get("sources", {})
-        sources = (
-            {k: v for k, v in raw_sources.items() if isinstance(k, str) and isinstance(v, str)}
-            if isinstance(raw_sources, dict)
-            else {}
-        )
+        batch_open_count = c.get("batch_open_count")
         clusters.append(
             {
                 "titles": titles[-MAX_TITLES_PER_CLUSTER:],
-                "notified_count": notified_count if isinstance(notified_count, int) else 0,
-                "unknown_source_count": (
-                    unknown_source_count if isinstance(unknown_source_count, int) else 0
+                "batch_open_count": batch_open_count if isinstance(batch_open_count, int) else 0,
+                "batch_ref_pub_date": (
+                    c.get("batch_ref_pub_date") if isinstance(c.get("batch_ref_pub_date"), str) else ""
                 ),
                 "last_notified_at": c.get("last_notified_at") or "",
-                "sources": sources,
             }
         )
     return clusters
@@ -129,16 +112,6 @@ def save_clusters(feed_id: str, clusters: list[dict]) -> None:
     with open(_clusters_path(feed_id), "w", encoding="utf-8") as f:
         json.dump({"clusters": clusters}, f, ensure_ascii=False, indent=2)
         f.write("\n")
-
-
-def extract_source(title: str) -> str:
-    """
-    タイトル末尾の " - 媒体名" から配信元名を取り出す。
-    無ければ空文字を返す(=配信元不明。続報判定の対象にはならない)。
-    """
-    if " - " in title:
-        return title.rsplit(" - ", 1)[1].strip()
-    return ""
 
 
 def normalize_title(title: str) -> str:
@@ -186,8 +159,8 @@ _EPOCH = datetime.min.replace(tzinfo=timezone.utc)
 
 def _parse_iso(value: str) -> datetime:
     """
-    wall clockのISO時刻文字列をパースする(クラスタの失効判定専用)。
-    欠けている/壊れている場合は _EPOCH (大昔) を返す。
+    wall clockのISO時刻文字列をパースする(クラスタの失効判定・クールダウン判定専用)。
+    欠けている/壊れている場合は _EPOCH (大昔) を返す(=クールダウン済み扱い)。
     """
     if value:
         try:
@@ -218,13 +191,14 @@ def classify_articles(
     articles: list[dict],
     now: datetime | None = None,
     first_n: int = DEFAULT_FIRST_N,
-    unknown_source_limit: int = DEFAULT_UNKNOWN_SOURCE_LIMIT,
     similarity_threshold: float = DEFAULT_SIMILARITY_THRESHOLD,
+    batch_cooldown_minutes: int = DEFAULT_BATCH_COOLDOWN_MINUTES,
     cluster_max_age_hours: int = DEFAULT_CLUSTER_MAX_AGE_HOURS,
     old_ids: set[str] | None = None,
 ) -> tuple[list[dict], set[str]]:
     """
-    未通知記事(古い順)を「同じ話題」でクラスタリングし、通知すべきものだけを返す。
+    未通知記事(古い順)を「同じ話題」でクラスタリングし、通知すべきものだけを返す
+    (バッチ+クールダウン方式)。
 
     articles: [{"id", "title", "link", "pub_date"}, ...] 古い順
     old_ids : 「配信から時間が経っている記事」のID集合(main.py の fresh_hours 判定結果)
@@ -235,25 +209,19 @@ def classify_articles(
     通知するかどうかの判定:
       - 既存クラスタにマッチした(=すでに通知済みの話題)
           - old_ids に入っている(古い記事) → 通知しない
-            (「初回枠」を古い後追い記事が不正に埋めるのを防ぐため、
-            枠が埋まっていなくてもここで弾く)
-          - 配信元が特定できる記事:
-              - まだ first_n 件に達していない → そのまま通知(最速枠)。
-                この枠は配信元が特定できた記事だけでカウントする。
-              - first_n 件に達している(続報の可能性) →
-                「同じ配信元が過去にこの話題で通知されており、かつ今回のpubDateが
-                その配信元の前回pubDateより新しい」場合にだけ続報として通知する。
-          - 配信元が特定できない記事:
-              - まだ unknown_source_limit 件に達していない(こちらは配信元が
-                特定できた記事とは別枠でカウント) → そのまま通知
-              - 達している → 続報判定のしようが無いため通知しない
+          - 現在の波がまだ first_n 件に達していない → そのまま通知(波に追加)
+          - 波が first_n 件で埋まっている → 次の両方を満たす場合だけ次の波として通知:
+              (a) pubDateが直前の波の最新pubDateから batch_cooldown_minutes 分以上後
+              (b) 壁時計で直前の通知から batch_cooldown_minutes 分以上経過
+            (pubDateが判定不能な場合は安全側に倒して満たしたものとみなす)
       - どのクラスタにもマッチしない(=初めての話題)
-          → 古い記事であっても通知する(見逃しを防ぐため)
+          → 古い記事であっても通知する(見逃しを防ぐため)。新しい波(1波目)を開始する。
 
     クラスタ状態は state/clusters_<feed_id>.json に保存される。
     """
     old_ids = old_ids or set()
     now = now or datetime.now(timezone.utc)
+    cooldown = timedelta(minutes=batch_cooldown_minutes)
     clusters = load_clusters(feed_id)
 
     # 古すぎるクラスタは破棄(無関係な後日の記事が誤って同じ話題に混ざるのを防ぐ)
@@ -269,7 +237,6 @@ def classify_articles(
 
     for a in articles:
         norm = normalize_title(a["title"])
-        source = extract_source(a["title"])
 
         best_cluster = None
         best_ratio = 0.0
@@ -285,47 +252,48 @@ def classify_articles(
                 skip_ids.add(a["id"])
                 continue
 
-            notify = False
-            if source:
-                if best_cluster["notified_count"] < first_n:
-                    # まだ「配信元が分かる記事」の最速枠が埋まっていない
-                    notify = True
-                else:
-                    # 続報判定: 同じ配信元が、前回より新しいpubDateで改めて記事を出したか
-                    prev_pub_str = best_cluster["sources"].get(source)
-                    article_pub = _parse_pub_date(a.get("pub_date", ""))
-                    prev_pub = _parse_pub_date(prev_pub_str) if prev_pub_str else None
-                    if prev_pub is not None and article_pub is not None and article_pub > prev_pub:
-                        notify = True
+            starting_new_batch = False
+            if best_cluster["batch_open_count"] < first_n:
+                notify = True
             else:
-                if best_cluster["unknown_source_count"] < unknown_source_limit:
-                    # 配信元不明な記事の最速枠(配信元が分かる記事とは別カウント)
-                    notify = True
+                article_pub = _parse_pub_date(a.get("pub_date", ""))
+                ref_pub = _parse_pub_date(best_cluster.get("batch_ref_pub_date", ""))
+                # pubDateが判定できない場合は見逃し防止のため満たしたものとみなす
+                pub_gate_ok = (
+                    article_pub is None
+                    or ref_pub is None
+                    or article_pub >= ref_pub + cooldown
+                )
+                last_notified = _parse_iso(best_cluster.get("last_notified_at", ""))
+                cooldown_gate_ok = now >= last_notified + cooldown
+                notify = pub_gate_ok and cooldown_gate_ok
+                starting_new_batch = notify
 
             if not notify:
                 skip_ids.add(a["id"])
                 continue
 
+            if starting_new_batch:
+                best_cluster["batch_open_count"] = 0
+                best_cluster["batch_ref_pub_date"] = ""
+
             to_notify.append(dict(a))
+            best_cluster["batch_open_count"] += 1
             best_cluster["last_notified_at"] = now.isoformat()
             best_cluster["titles"].append(norm)
             best_cluster["titles"] = best_cluster["titles"][-MAX_TITLES_PER_CLUSTER:]
-            if source:
-                best_cluster["notified_count"] += 1
-                best_cluster["sources"][source] = a.get("pub_date", "")
-                if len(best_cluster["sources"]) > MAX_SOURCES_PER_CLUSTER:
-                    # 古い配信元から間引く(dictは挿入順を保持するのでpopitem(last=False)相当)
-                    oldest_source = next(iter(best_cluster["sources"]))
-                    del best_cluster["sources"][oldest_source]
-            else:
-                best_cluster["unknown_source_count"] += 1
+
+            article_pub = _parse_pub_date(a.get("pub_date", ""))
+            if article_pub is not None:
+                cur_ref = _parse_pub_date(best_cluster.get("batch_ref_pub_date", ""))
+                if cur_ref is None or article_pub > cur_ref:
+                    best_cluster["batch_ref_pub_date"] = a.get("pub_date", "")
         else:
             new_cluster = {
                 "titles": [norm],
-                "notified_count": 1 if source else 0,
-                "unknown_source_count": 0 if source else 1,
+                "batch_open_count": 1,
+                "batch_ref_pub_date": a.get("pub_date", ""),
                 "last_notified_at": now.isoformat(),
-                "sources": {source: a.get("pub_date", "")} if source else {},
             }
             clusters.append(new_cluster)
             to_notify.append(dict(a))
