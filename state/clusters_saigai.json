@@ -23,6 +23,28 @@
       "batch_open_count": 1,
       "batch_ref_pub_date": "Tue, 22 Sep 2026 10:10:01 GMT",
       "last_notified_at": "2026-09-22T14:10:37.665772+00:00"
+    },
+    {
+      "titles": [
+        "にも影響3空港と羽田などを結ぶ39便欠航東海道新幹線も夜にかけて遅れなどの可能性"
+      ],
+      "sources": [
+        "日テレNEWS NNN"
+      ],
+      "batch_open_count": 1,
+      "batch_ref_pub_date": "Mon, 21 Sep 2026 09:31:00 GMT",
+      "last_notified_at": "2026-09-22T16:10:34.185925+00:00"
+    },
+    {
+      "titles": [
+        "台風25号東京都(東京地方)の一部が強風域に入りました(気象予報士日直主任2026年09月20日)"
+      ],
+      "sources": [
+        "tenki.jp"
+      ],
+      "batch_open_count": 1,
+      "batch_ref_pub_date": "Sun, 20 Sep 2026 04:13:55 GMT",
+      "last_notified_at": "2026-09-22T16:10:34.185925+00:00"
     }
   ]
 }
