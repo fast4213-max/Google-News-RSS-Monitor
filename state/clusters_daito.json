@@ -1,3 +1,15 @@
 {
-  "clusters": []
+  "clusters": [
+    {
+      "titles": [
+        "敬老の日総合福祉センタ寄席KazuKen出演"
+      ],
+      "sources": [
+        "選挙ドットコム"
+      ],
+      "batch_open_count": 1,
+      "batch_ref_pub_date": "Tue, 22 Sep 2026 08:36:45 GMT",
+      "last_notified_at": "2026-09-22T09:10:39.339801+00:00"
+    }
+  ]
 }
