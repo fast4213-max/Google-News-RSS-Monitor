@@ -45,6 +45,17 @@
       "batch_open_count": 1,
       "batch_ref_pub_date": "Sun, 20 Sep 2026 04:13:55 GMT",
       "last_notified_at": "2026-09-22T16:10:34.185925+00:00"
+    },
+    {
+      "titles": [
+        "あす22日は台風が離れる晴れてさわやかな陽気に連休最終日の23日は雲が広がりやすい見込み"
+      ],
+      "sources": [
+        "日テレNEWS NNN"
+      ],
+      "batch_open_count": 1,
+      "batch_ref_pub_date": "Mon, 21 Sep 2026 10:11:00 GMT",
+      "last_notified_at": "2026-09-22T21:10:34.662651+00:00"
     }
   ]
 }
