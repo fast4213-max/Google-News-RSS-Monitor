@@ -1028,10 +1028,8 @@ def test_feeds_json_is_valid():
     feeds = main.load_feeds()
     ids = [f["id"] for f in feeds]
     assert len(ids) == len(set(ids)), f"feeds.json のidが重複しています: {ids}"
-    webhooks = [f["webhook_env"] for f in feeds]
-    assert len(webhooks) == len(set(webhooks)), (
-        f"feeds.json のwebhook_envが重複しています(別チャンネルに分かれません): {webhooks}"
-    )
+    # webhook_env の重複は許可する。「大阪・近畿の広域災害」と「大東市の災害情報」の
+    # ように、検索条件を分けたいが通知先チャンネルは同じ、というケースがあるため。
     print(f"OK: test_feeds_json_is_valid ({len(feeds)}フィード: {', '.join(ids)})")
 
 
