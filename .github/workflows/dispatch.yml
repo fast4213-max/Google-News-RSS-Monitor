@@ -22,6 +22,17 @@ on:
 permissions:
   contents: write  # state/*.json を自動コミットするために必要
 
+# 同時実行を禁止する。
+# cron-job.org の定期起動と手動実行(workflow_dispatch)が重なると、2つのジョブが
+# 同じ state/*.json を読んでから書き戻すため、
+#   - 両方が同じ記事を「未読」と判定して二重通知する
+#   - 後から終わった方の push が non-fast-forward で失敗し、既読記録が丸ごと失われる
+# という事故が起きる。cancel-in-progress は false にして、走っている方は必ず
+# 最後まで終わらせ(=通知済みの記事を確実に既読化させ)、後続を待たせる。
+concurrency:
+  group: rss-notifier-state
+  cancel-in-progress: false
+
 jobs:
   notify:
     runs-on: ubuntu-latest
@@ -77,18 +88,43 @@ jobs:
 
       - name: 状態ファイル(state/*.json)の変更を確認
         id: diff
+        # 必ず実行する。通知ステップが失敗しても、そこまでに送信できた分の既読記録は
+        # コミットしないと次回に二重通知される。
+        if: "!cancelled()"
         run: |
           git config user.name "rss-notifier-bot"
           git config user.email "actions@users.noreply.github.com"
-          if git diff --quiet -- state/; then
+          # git diff は「追跡済みファイルの変更」しか見ないため、feeds.json にフィードを
+          # 追加した直後の state/read_<新ID>.json のような**新規ファイル**を見落とす。
+          # 見落とすと既読記録が永久にコミットされず、毎時まるごと再通知され続ける。
+          # git status --porcelain なら未追跡ファイルも検出できる。
+          if [ -z "$(git status --porcelain -- state/)" ]; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
           else
             echo "changed=true" >> "$GITHUB_OUTPUT"
           fi
 
       - name: 状態ファイルをコミット&プッシュ
-        if: steps.diff.outputs.changed == 'true'
+        if: "!cancelled() && steps.diff.outputs.changed == 'true'"
         run: |
-          git add state/
+          git add -A state/
           git commit -m "chore: update state via ${{ steps.mode.outputs.mode }} [skip ci]"
-          git push
+          # push が他のコミットと競合することがある(state以外の変更がpushされた直後など)。
+          # ここで諦めると既読記録が失われ、次回に同じ記事が丸ごと再通知されるため、
+          # rebase して数回リトライする。
+          for attempt in 1 2 3 4 5; do
+            if git push; then
+              echo "push 成功 (${attempt}回目)"
+              exit 0
+            fi
+            echo "push に失敗しました (${attempt}回目)。rebase して再試行します..."
+            sleep $((attempt * 3))
+            # このステップは bash -e で実行されるため、rebase の失敗でスクリプト全体が
+            # 止まらないよう明示的に受け止める(中断したrebaseは片付けて次の試行に進む)。
+            if ! git pull --rebase --autostash origin "${{ github.ref_name }}"; then
+              echo "rebase に失敗しました。中断して再試行します。"
+              git rebase --abort || true
+            fi
+          done
+          echo "::error::state/*.json の push に5回失敗しました。既読記録が保存されていないため、次回の実行で記事が重複通知される可能性があります。"
+          exit 1

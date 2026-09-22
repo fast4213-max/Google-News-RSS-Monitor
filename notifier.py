@@ -88,6 +88,9 @@ def _post(webhook_env: str, body: dict) -> None:
                     raise RuntimeError(f"Discord応答が異常です status={res.status}")
             return  # 成功
         except urllib.error.HTTPError as e:
+            # 注意: レスポンス本文は error_body に入れる。引数の body(=送信ペイロード)に
+            # 代入してしまうと、再試行ループの中で送信内容を壊すことになる。
+            error_body = e.read().decode("utf-8", errors="ignore")
             if e.code == 429 and attempt <= RATE_LIMIT_MAX_RETRIES:
                 retry_after = e.headers.get("Retry-After") if e.headers else None
                 try:
@@ -101,15 +104,20 @@ def _post(webhook_env: str, body: dict) -> None:
                 )
                 time.sleep(wait_seconds)
                 continue
-            body = e.read().decode("utf-8", errors="ignore")
-            raise RuntimeError(f"Discord送信でHTTPエラー status={e.code} body={body}") from e
+            if e.code == 429:
+                # 再試行の上限に達した場合。原因が分かるよう専用のメッセージにする
+                raise RuntimeError(
+                    f"レート制限(429)が{RATE_LIMIT_MAX_RETRIES}回の再試行後も解消しませんでした"
+                ) from e
+            raise RuntimeError(
+                f"Discord送信でHTTPエラー status={e.code} body={error_body}"
+            ) from e
         except Exception as e:
             raise RuntimeError(f"Discord送信に失敗しました: {e}") from e
 
-    # ここに到達するのは429が RATE_LIMIT_MAX_RETRIES 回を超えて続いた場合
-    raise RuntimeError(
-        f"レート制限(429)が{RATE_LIMIT_MAX_RETRIES}回の再試行後も解消しませんでした"
-    )
+    # 到達しない想定(ループ内で必ず return か raise する)だが、将来リトライ条件を
+    # 変えた時に「黙って成功扱い」になるのを防ぐための保険。
+    raise RuntimeError(f"Discord送信が完了しませんでした (webhook_env={webhook_env})")
 
 
 def send_article(webhook_env: str, feed_name: str, title: str, link: str) -> None:

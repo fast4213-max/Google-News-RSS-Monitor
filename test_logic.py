@@ -473,6 +473,146 @@ def test_fresh_hours_filter():
     print("OK: test_fresh_hours_filter (pubDateが無い/壊れている場合は通知する側に倒す)")
 
 
+def test_queued_article_is_not_dropped_on_next_run():
+    """
+    回帰テスト: キューに持ち越した記事が、次回実行で捨てられないこと。
+
+    かつては process_feed が「未読抽出 → stale/dedup判定 → キュー読み込み」の順に
+    処理していたため、以下の事故が起きていた:
+      1回目: max_per_run を超えた分がキューに積まれる
+      2回目: Googleニュースは同じ記事を何時間も載せ続けるので、キューの記事が
+             RSSにもまだ載っている。それが再度 stale/dedup 判定にかけられ、
+             「既に通知済みの話題の、公開から時間が経った後追い記事」と判定されて
+             既読化される → 直後のキュー整合性チェックで弾かれ、
+             一度も通知されないまま消える(しかもキューファイルにゴミが残る)
+    現在はキューを未読抽出より先に読み、キュー内のIDを再判定対象から外している。
+    """
+    from datetime import datetime, timedelta, timezone
+    from email.utils import format_datetime
+
+    import notifier
+    import state_manager
+
+    feed_id = "test_queue_carryover"
+    feed = {
+        "id": feed_id,
+        "name": "テスト",
+        "url": "https://example.invalid/rss",
+        "webhook_env": "DUMMY_WEBHOOK_ENV",
+        "max_per_run": 1,  # 1件しか送れないので必ずキューに持ち越しが発生する
+    }
+    paths = [
+        state_manager._read_path(feed_id),
+        state_manager._queue_path(feed_id),
+        dedup._clusters_path(feed_id),
+    ]
+
+    now = datetime.now(timezone.utc)
+
+    def build_feed(hours_ago):
+        """同じ話題の2記事を、指定時間前の配信として返す(RSSは新しい順)。"""
+        pub = format_datetime(now - timedelta(hours=hours_ago))
+        return [
+            rss.Article(id="q2", title="大東市で記者会見 新たな方針を説明 - B新聞", link="https://example.com/q2", pub_date=pub),
+            rss.Article(id="q1", title="大東市で記者会見 新たな方針を説明 - A新聞", link="https://example.com/q1", pub_date=pub),
+        ]
+
+    sent_ids = []
+    original_fetch = rss.fetch_articles
+    original_send = notifier.send_articles
+    original_error = notifier.send_error
+
+    def fake_send_articles(webhook_env, feed_name, articles, max_count):
+        delivered = articles[:max_count]
+        sent_ids.extend(a["id"] for a in delivered)
+        return delivered
+
+    try:
+        for p in paths:
+            if os.path.exists(p):
+                os.remove(p)
+        notifier.send_articles = fake_send_articles
+        notifier.send_error = lambda *a, **k: None
+
+        # 1回目: 2件とも未読。max_per_run=1 なので q1 だけ送信し、q2 はキューへ
+        rss.fetch_articles = lambda url: build_feed(0.1)
+        main.process_feed(feed)
+        assert sent_ids == ["q1"], sent_ids
+        assert [q["id"] for q in state_manager.load_queue(feed_id)] == ["q2"]
+
+        # 2回目: 同じ記事がRSSに残ったまま、かつ fresh_hours を超えて古くなっている。
+        # 持ち越した q2 は「後追い記事」と誤判定されずに通知されること。
+        sent_ids.clear()
+        rss.fetch_articles = lambda url: build_feed(main.DEFAULT_FRESH_HOURS + 2)
+        main.process_feed(feed)
+        assert sent_ids == ["q2"], f"持ち越し記事が通知されなかった: {sent_ids}"
+        assert state_manager.load_queue(feed_id) == []
+        assert set(state_manager.load_read_ids(feed_id)) == {"q1", "q2"}
+        print("OK: test_queued_article_is_not_dropped (持ち越し記事は次回に必ず通知される)")
+
+        # 3回目: すべて既読。キューにゴミが残っていないこと
+        sent_ids.clear()
+        rss.fetch_articles = lambda url: build_feed(main.DEFAULT_FRESH_HOURS + 3)
+        main.process_feed(feed)
+        assert sent_ids == [], sent_ids
+        assert state_manager.load_queue(feed_id) == []
+        print("OK: test_queued_article_is_not_dropped (通知済みの記事が再通知されない)")
+    finally:
+        rss.fetch_articles = original_fetch
+        notifier.send_articles = original_send
+        notifier.send_error = original_error
+        for p in paths:
+            if os.path.exists(p):
+                os.remove(p)
+
+
+def test_stale_queue_entries_are_cleaned_up():
+    """
+    既読化済みの記事がキューに残っていた場合(過去バージョンが残した不整合データ)、
+    新規未読が無い実行でもキューから掃除されること。
+    掃除しないと state/queue_<id>.json にゴミが永久に残り続ける。
+    """
+    import notifier
+    import state_manager
+
+    feed_id = "test_queue_cleanup"
+    feed = {
+        "id": feed_id,
+        "name": "テスト",
+        "url": "https://example.invalid/rss",
+        "webhook_env": "DUMMY_WEBHOOK_ENV",
+    }
+    paths = [
+        state_manager._read_path(feed_id),
+        state_manager._queue_path(feed_id),
+        dedup._clusters_path(feed_id),
+    ]
+    original_fetch = rss.fetch_articles
+    original_error = notifier.send_error
+    try:
+        for p in paths:
+            if os.path.exists(p):
+                os.remove(p)
+        # 既読なのにキューにも残っている、という不整合状態を作る
+        state_manager.append_read_ids(feed_id, ["ghost"])
+        state_manager.save_queue(
+            feed_id, [{"id": "ghost", "title": "既読なのに残っている記事", "link": "https://example.com/g", "pub_date": ""}]
+        )
+
+        rss.fetch_articles = lambda url: []
+        notifier.send_error = lambda *a, **k: None
+        main.process_feed(feed)
+
+        assert state_manager.load_queue(feed_id) == [], state_manager.load_queue(feed_id)
+        print("OK: test_stale_queue_entries_are_cleaned_up (既読化済みのゴミがキューから消える)")
+    finally:
+        rss.fetch_articles = original_fetch
+        notifier.send_error = original_error
+        for p in paths:
+            if os.path.exists(p):
+                os.remove(p)
+
+
 if __name__ == "__main__":
     test_parse_success()
     test_parse_no_channel_raises()
@@ -488,4 +628,6 @@ if __name__ == "__main__":
     test_load_queue_skips_malformed_items()
     test_rss_skips_broken_item_but_keeps_rest()
     test_fresh_hours_filter()
+    test_queued_article_is_not_dropped_on_next_run()
+    test_stale_queue_entries_are_cleaned_up()
     print("\n全テスト成功")

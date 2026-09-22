@@ -16,6 +16,7 @@ RSSに現在載っている記事を「全部既読」にするだけで、Disco
 import json
 import os
 
+import dedup
 import logger
 import notifier
 import rss
@@ -51,6 +52,13 @@ def main() -> None:
 
         # 持ち越しキューが残っていた場合は初期化時にクリアする
         state_manager.save_queue(feed_id, [])
+
+        # 話題クラスタも初期化する。
+        # ここをクリアしないと、初期化前の古いクラスタが残ったままになり、
+        # 「初期化後に初めて出てきた話題」が既存クラスタに誤ってマッチして
+        # 波(バッチ)判定で間引かれ、通知されないことがある。
+        # 全記事を既読化した直後なので、クリアしても過去記事が通知されることはない。
+        dedup.save_clusters(feed_id, [])
 
         logger.info(_CONTEXT, f"[{feed_id}] {len(set(ids))}件を既読化しました")
 

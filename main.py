@@ -5,13 +5,15 @@
 処理の流れ (フィードごと):
   1. feeds.json からRSS URLを読む(max_per_run / stale_days / fresh_hours が指定されていればそれを使う)
   2. RSSを取得・パース (rss.py)
-  3. 前回までの既読ID (state/read_<id>.json) と比較し、未読記事を抽出
+  3. 前回までの既読ID (state/read_<id>.json) と持ち越しキュー (state/queue_<id>.json) を読み、
+     そのどちらにも入っていない記事を「今回の未読」として抽出
+     (キューの記事は前回「通知する」と判定済みなので、以降の日付/重複判定にはかけない)
   3.5 公開日が stale_days 日より古い記事は、既読化のみして通知しない
       (Googleニュースの検索結果に急に大昔の記事が紛れ込むことがあるため)
   3.6 公開日が fresh_hours 時間より古い記事は「古い記事」として印を付け、
       すでに通知済みの話題の後追い記事であれば通知しない。
       まだ一度も通知していない話題であれば、古くても通知する(見逃し防止)
-  4. 前回持ち越しのキュー (state/queue_<id>.json) を先頭に結合
+  4. 持ち越しキューを先頭に結合 (古いものから順に通知するため)
   5. 先頭 max_per_run 件だけDiscordに通知
   6. 通知できた分だけ既読化。通知しきれなかった分はキューに保存(破棄しない)
   7. RSS取得/パース/送信のいずれかで失敗したら Discord にエラー通知し、
@@ -162,7 +164,20 @@ def process_feed(feed: dict) -> None:
 
     # 2. 既読IDと比較して未読を抽出 (RSSは新しい順に並んでいる前提なので反転して古い順にする)
     read_ids = state_manager.load_read_ids(feed_id)
-    unread_new = [a for a in reversed(articles) if a.id not in read_ids]
+
+    # 2.1 前回持ち越しキューを「未読抽出より先に」読み込む。
+    #     キューの記事は前回の実行で既に「通知する」と判定済みで、まだ送れていないだけ。
+    #     Googleニュースの検索RSSは同じ記事を何時間も載せ続けるため、これらは今回の
+    #     RSSにもそのまま出てくる。ここで除外しておかないと、下の stale / dedup 判定に
+    #     もう一度かけられ、「公開から時間が経った後追い記事」とみなされて既読化され、
+    #     キューからも消える(=一度も通知されないまま失われる)。
+    #     持ち越し記事の再判定は行わない、というのが本来の設計(手順3のコメント参照)。
+    queued = state_manager.load_queue(feed_id)
+    queued_ids = {q["id"] for q in queued}
+
+    unread_new = [
+        a for a in reversed(articles) if a.id not in read_ids and a.id not in queued_ids
+    ]
 
     # 2.5 公開日が stale_days 日より古い記事は「既読化のみ」で通知対象から外す
     #     (Googleニュースの検索結果に急に大昔の記事が紛れ込むことがあるため)
@@ -211,24 +226,32 @@ def process_feed(feed: dict) -> None:
             f"(うち公開から{fresh_hours}時間以上経った後追い記事{old_skipped}件)",
         )
 
-    # 3. 前回持ち越しキューを先頭に結合 (古いものを優先して通知するため)
+    # 3. 前回持ち越しキュー(手順2.1で読み込み済み)を先頭に結合 (古いものを優先して通知するため)
     #    (queue内の記事は、キューに入った時点で既に新鮮度チェック済み・クラスタ判定済みのため、
     #     ここでは再チェックしない)
-    queued = state_manager.load_queue(feed_id)
-    queued_ids = {q["id"] for q in queued}
-    # キューにあるがすでに既読扱いになっているものは除外(念のための整合性チェック)
-    queued = [q for q in queued if q["id"] not in read_ids]
+    # キューにあるがすでに既読扱いになっているものは除外(念のための整合性チェック)。
+    # 手順2.1でキュー内のIDを未読抽出から除外しているため、通常ここでは何も落ちない。
+    # 落ちるのは過去の不整合データが残っていた場合だけ。
+    queued_alive = [q for q in queued if q["id"] not in read_ids]
 
     # 新規未読のうち、キューに重複して入っているものは除外
     unread_new_dicts = [d for d in to_notify_dicts if d["id"] not in queued_ids]
 
-    pending = queued + unread_new_dicts  # 通知すべき全件(古い順)
+    pending = queued_alive + unread_new_dicts  # 通知すべき全件(古い順)
 
     if not pending:
+        # 既読化済みのゴミがキューに残っていた場合はここで掃除する
+        # (掃除しないと state/queue_<id>.json に永遠に残り続ける)
+        if len(queued_alive) != len(queued):
+            state_manager.save_queue(feed_id, queued_alive)
+            logger.info(
+                ctx,
+                f"既読化済みの記事{len(queued) - len(queued_alive)}件をキューから削除しました",
+            )
         logger.info(ctx, "未読記事なし。通知スキップ")
         return
 
-    logger.info(ctx, f"未読合計: {len(pending)}件 (うち持ち越し{len(queued)}件)")
+    logger.info(ctx, f"未読合計: {len(pending)}件 (うち持ち越し{len(queued_alive)}件)")
 
     # 4. Discord送信 (最大max_per_run件、このフィード専用のWebhookへ)
     #    send_articles は途中で失敗しても例外を投げず、送信できた分だけを返す
