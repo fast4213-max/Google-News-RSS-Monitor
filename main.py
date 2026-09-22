@@ -33,7 +33,7 @@ import rss
 import state_manager
 
 _CONTEXT = "main"
-DEFAULT_MAX_NOTIFY_PER_RUN = 10  # 1フィードあたり1回で通知する上限件数のデフォルト値
+DEFAULT_MAX_NOTIFY_PER_RUN = 50  # 1フィードあたり1回で通知する上限件数のデフォルト値
 DEFAULT_STALE_ARTICLE_DAYS = 3   # 記事の公開日がこれより古ければ「既読化のみ」で通知しないデフォルト値(日単位、大昔の記事対策)
 DEFAULT_FRESH_HOURS = 3          # 記事の公開日がこれより古ければ「古い記事」として扱うデフォルト値(時間単位)
                                  # 「古い記事」は、すでに通知済みの話題の後追いなら通知せず、
