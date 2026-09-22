@@ -63,6 +63,7 @@ jobs:
           # フィードを追加した場合はここに DISCORD_WEBHOOK_URL_<新ID> を1行追加してください。
           # (feeds.json の webhook_env に書いた名前と、ここの env の名前を一致させる)
           DISCORD_WEBHOOK_URL_DAITO: ${{ secrets.DISCORD_WEBHOOK_URL_DAITO }}
+          DISCORD_WEBHOOK_URL_SAIGAI: ${{ secrets.DISCORD_WEBHOOK_URL_SAIGAI }}
           DISCORD_WEBHOOK_URL_SYSTEM: ${{ secrets.DISCORD_WEBHOOK_URL_SYSTEM }}
         run: python main.py
 
@@ -70,6 +71,7 @@ jobs:
         if: steps.mode.outputs.mode == 'init-read'
         env:
           DISCORD_WEBHOOK_URL_DAITO: ${{ secrets.DISCORD_WEBHOOK_URL_DAITO }}
+          DISCORD_WEBHOOK_URL_SAIGAI: ${{ secrets.DISCORD_WEBHOOK_URL_SAIGAI }}
           DISCORD_WEBHOOK_URL_SYSTEM: ${{ secrets.DISCORD_WEBHOOK_URL_SYSTEM }}
         run: python init_read.py
 
@@ -77,6 +79,7 @@ jobs:
         if: steps.mode.outputs.mode == 'test-notify'
         env:
           DISCORD_WEBHOOK_URL_DAITO: ${{ secrets.DISCORD_WEBHOOK_URL_DAITO }}
+          DISCORD_WEBHOOK_URL_SAIGAI: ${{ secrets.DISCORD_WEBHOOK_URL_SAIGAI }}
           DISCORD_WEBHOOK_URL_SYSTEM: ${{ secrets.DISCORD_WEBHOOK_URL_SYSTEM }}
         run: python test_notify.py
 

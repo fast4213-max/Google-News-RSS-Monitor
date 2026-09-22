@@ -8,8 +8,14 @@ RSS取得・パース処理。
   - Google News RSS は Bot 判定で弾かれることがあるため、ブラウザ相当の User-Agent を付ける。
   - 1記事ずつ dict {"id": guid, "title": str, "link": str, "pub_date": str} にして返す。
     id (guid) が既読管理のキーになる。guid が無い場合は link を代わりに使う。
+  - Google News 側の一時的な不調 (503 Service Unavailable / 502 / タイムアウト等) は
+    数十秒で復旧することがほとんどなので、その場で数秒待って自動的に再試行する。
+    再試行しても駄目だった場合にだけ RssFetchError を投げてDiscordにエラー通知する
+    (一瞬のブリップのたびにシステム通知チャンネルへエラーが飛ぶのを防ぐため)。
 """
 
+import time
+import urllib.error
 import urllib.request
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
@@ -22,6 +28,16 @@ USER_AGENT = (
     "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 )
 TIMEOUT_SECONDS = 20
+# 一時的な失敗に対する再試行設定。
+# 待ち時間の合計は 2+4=6秒 程度に抑えてある。GitHub Actions の実行時間を
+# 無駄に伸ばさず、かつGoogle側の一瞬の不調は吸収できる長さ。
+RETRY_BACKOFF_SECONDS = (2, 4)  # 要素数 = 再試行回数 (初回を含めると最大3回試行する)
+# 再試行する価値があるHTTPステータス。
+#   5xx: Google側の一時的な障害
+#   408: リクエストタイムアウト
+#   429: レート制限(少し待てば通ることがある)
+# 404 や 400 などは待っても結果が変わらないため、即座にエラーにする。
+RETRYABLE_STATUS = {408, 429}
 
 
 @dataclass
@@ -40,19 +56,61 @@ class RssParseError(Exception):
     """RSS解析(XML)段階のエラー。構造が想定と異なる場合。"""
 
 
-def fetch_raw(url: str) -> bytes:
-    """RSSのXML本文をバイト列で取得する。失敗したら RssFetchError。"""
+def _is_retryable(e: Exception) -> bool:
+    """
+    その例外が「少し待てば直るかもしれない一時的な失敗」かどうかを判定する。
+
+    Google News RSS は 503 Service Unavailable を時々返すが、これは
+    こちらの不具合ではなくGoogle側の一時的な不調で、数十秒〜次回実行時には
+    復旧していることがほとんど。こうしたものだけ再試行の対象にする。
+    """
+    if isinstance(e, urllib.error.HTTPError):
+        return e.code in RETRYABLE_STATUS or 500 <= e.code < 600
+    # URLError(DNS失敗・接続拒否など)とタイムアウトはネットワーク起因の一時的失敗とみなす
+    return isinstance(e, (urllib.error.URLError, TimeoutError, OSError))
+
+
+def _fetch_once(url: str) -> bytes:
     req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-    try:
-        with urllib.request.urlopen(req, timeout=TIMEOUT_SECONDS) as res:
-            status = res.status
-            if status != 200:
-                raise RssFetchError(f"HTTPステータス異常: {status} url={url}")
-            return res.read()
-    except RssFetchError:
-        raise
-    except Exception as e:
-        raise RssFetchError(f"RSS取得に失敗しました url={url} : {e}") from e
+    with urllib.request.urlopen(req, timeout=TIMEOUT_SECONDS) as res:
+        status = res.status
+        if status != 200:
+            raise RssFetchError(f"HTTPステータス異常: {status} url={url}")
+        return res.read()
+
+
+def fetch_raw(url: str) -> bytes:
+    """
+    RSSのXML本文をバイト列で取得する。
+
+    一時的な失敗(5xx・タイムアウト・接続エラーなど)は RETRY_BACKOFF_SECONDS に従って
+    待ってから自動的に再試行する。再試行しても駄目な場合、および再試行しても
+    無意味な失敗(404など)は RssFetchError を投げる。
+    """
+    attempts = len(RETRY_BACKOFF_SECONDS) + 1
+    last_error: Exception | None = None
+
+    for attempt in range(attempts):
+        try:
+            return _fetch_once(url)
+        except RssFetchError:
+            raise
+        except Exception as e:
+            last_error = e
+            is_last_attempt = attempt == attempts - 1
+            if is_last_attempt or not _is_retryable(e):
+                break
+            wait = RETRY_BACKOFF_SECONDS[attempt]
+            logger.warn(
+                _CONTEXT,
+                f"RSS取得に一時的に失敗しました({attempt + 1}/{attempts}回目): {e} "
+                f"→ {wait}秒待って再試行します url={url}",
+            )
+            time.sleep(wait)
+
+    raise RssFetchError(
+        f"RSS取得に失敗しました({attempts}回試行) url={url} : {last_error}"
+    ) from last_error
 
 
 def parse_items(raw_xml: bytes, url: str) -> list[Article]:

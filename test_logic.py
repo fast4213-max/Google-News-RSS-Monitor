@@ -957,6 +957,147 @@ def test_stale_queue_entries_are_cleaned_up():
                 os.remove(p)
 
 
+def test_first_n_zero_notifies_every_article_in_topic():
+    """
+    dedup_first_n に0を指定したフィード(自然災害系)では、
+    同じ話題の記事でも上限3件で打ち切られず全件通知されることを確認する。
+    ただし「公開から時間が経った後追い記事(old_ids)」の除外だけは効く。
+    """
+    feed_id = "test_first_n_zero"
+    path = dedup._clusters_path(feed_id)
+    if os.path.exists(path):
+        os.remove(path)
+
+    from datetime import datetime, timedelta, timezone
+
+    base = datetime(2026, 9, 21, 22, 0, tzinfo=timezone.utc)
+    titles = [
+        "台風25号で記録的な大雨 土砂崩れ相次ぐ - A新聞",
+        "台風25号 大雨で土砂崩れ 2人死亡 - B新聞",
+        "台風25号の大雨 土砂崩れで不明者を捜索 - C新聞",
+        "台風25号 土砂崩れ 大雨の被害拡大 - D新聞",
+        "台風25号による大雨 土砂崩れで住宅倒壊 - E新聞",
+    ]
+    articles = [
+        {
+            "id": f"z{i}",
+            "title": t,
+            "link": f"https://example.com/z{i}",
+            "pub_date": (base + timedelta(minutes=i)).strftime("%a, %d %b %Y %H:%M:%S GMT"),
+        }
+        for i, t in enumerate(titles)
+    ]
+
+    try:
+        # 比較用: デフォルト(first_n=3)だと3件で打ち切られる
+        to_notify, skip_ids = dedup.classify_articles(feed_id, articles, now=base)
+        assert len(to_notify) == 3, f"first_n=3では3件のはずが{len(to_notify)}件"
+        assert len(skip_ids) == 2
+        print("OK: test_first_n_zero (比較: デフォルトでは3件で打ち切られる)")
+
+        os.remove(path)
+
+        # first_n=0 なら同じ話題でも全件通知される
+        to_notify2, skip_ids2 = dedup.classify_articles(feed_id, articles, now=base, first_n=0)
+        assert len(to_notify2) == 5, f"first_n=0では5件のはずが{len(to_notify2)}件"
+        assert skip_ids2 == set()
+        print("OK: test_first_n_zero (上限なしでは同一話題でも全件通知される)")
+
+        # 上限なしでも、通知済み話題の「古い後追い記事」は除外される
+        followup = {
+            "id": "z9",
+            "title": "台風25号 大雨による土砂崩れ 被害まとめ - F新聞",
+            "link": "https://example.com/z9",
+            "pub_date": base.strftime("%a, %d %b %Y %H:%M:%S GMT"),
+        }
+        to_notify3, skip_ids3 = dedup.classify_articles(
+            feed_id, [followup], now=base + timedelta(hours=5), first_n=0, old_ids={"z9"}
+        )
+        assert to_notify3 == [] and skip_ids3 == {"z9"}
+        print("OK: test_first_n_zero (上限なしでも古い後追い記事は除外される)")
+    finally:
+        if os.path.exists(path):
+            os.remove(path)
+
+
+def test_feeds_json_is_valid():
+    """
+    本番の feeds.json が load_feeds のバリデーションを通ることを確認する
+    (フィード追加時のタイプミスをテストで検知するため)。
+    """
+    feeds = main.load_feeds()
+    ids = [f["id"] for f in feeds]
+    assert len(ids) == len(set(ids)), f"feeds.json のidが重複しています: {ids}"
+    webhooks = [f["webhook_env"] for f in feeds]
+    assert len(webhooks) == len(set(webhooks)), (
+        f"feeds.json のwebhook_envが重複しています(別チャンネルに分かれません): {webhooks}"
+    )
+    print(f"OK: test_feeds_json_is_valid ({len(feeds)}フィード: {', '.join(ids)})")
+
+
+def test_rss_retries_on_temporary_failure():
+    """
+    Google News側の一時的な503は自動で再試行され、
+    2回目で成功すればエラー通知を出さずに記事を返すことを確認する。
+    また、再試行しても復旧しない場合は RssFetchError になることも確認する。
+    """
+    import urllib.error
+
+    calls = {"n": 0}
+    original_fetch_once = rss._fetch_once
+    original_sleep = rss.time.sleep
+    rss.time.sleep = lambda _s: None  # テストを待たせない
+
+    def flaky(url):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise urllib.error.HTTPError(url, 503, "Service Unavailable", {}, None)
+        return SAMPLE_RSS.encode("utf-8")
+
+    try:
+        rss._fetch_once = flaky
+        raw = rss.fetch_raw("https://example.com/rss")
+        assert calls["n"] == 2, f"再試行されていません(呼び出し{calls['n']}回)"
+        assert len(rss.parse_items(raw, "test")) == 3
+        print("OK: test_rss_retries (503は再試行され、成功すればエラーにならない)")
+
+        calls["n"] = 0
+
+        def always_down(url):
+            calls["n"] += 1
+            raise urllib.error.HTTPError(url, 503, "Service Unavailable", {}, None)
+
+        rss._fetch_once = always_down
+        try:
+            rss.fetch_raw("https://example.com/rss")
+            raise AssertionError("RssFetchErrorが送出されるべき")
+        except rss.RssFetchError:
+            pass
+        assert calls["n"] == len(rss.RETRY_BACKOFF_SECONDS) + 1, (
+            f"試行回数が想定と違います: {calls['n']}"
+        )
+        print("OK: test_rss_retries (復旧しない場合は試行を打ち切ってエラーにする)")
+
+        # 404のような「待っても無駄な失敗」は再試行せず即エラーにする
+        calls["n"] = 0
+
+        def not_found(url):
+            calls["n"] += 1
+            raise urllib.error.HTTPError(url, 404, "Not Found", {}, None)
+
+        rss._fetch_once = not_found
+        try:
+            rss.fetch_raw("https://example.com/rss")
+            raise AssertionError("RssFetchErrorが送出されるべき")
+        except rss.RssFetchError:
+            pass
+        assert calls["n"] == 1, f"404で再試行してはいけません(呼び出し{calls['n']}回)"
+        print("OK: test_rss_retries (404は再試行せず即エラー)")
+    finally:
+        rss._fetch_once = original_fetch_once
+        rss.time.sleep = original_sleep
+
+
 if __name__ == "__main__":
     test_parse_success()
     test_parse_no_channel_raises()
@@ -982,4 +1123,7 @@ if __name__ == "__main__":
     test_fresh_hours_filter()
     test_queued_article_is_not_dropped_on_next_run()
     test_stale_queue_entries_are_cleaned_up()
+    test_first_n_zero_notifies_every_article_in_topic()
+    test_feeds_json_is_valid()
+    test_rss_retries_on_temporary_failure()
     print("\n全テスト成功")

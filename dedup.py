@@ -10,6 +10,9 @@ Discordに同じ話題の記事が延々と流れ続けるのを防ぐための�
   - 1つの話題は「波(バッチ)」単位で通知する。
       - 1波目: 話題が初めて検知された時点で、最速 first_n 件（デフォルト3件）を
         そのまま通知する。配信元は問わない(タイトル末尾に配信元表記が無くてもよい)。
+      - first_n に 0以下 を指定した場合は「波の上限なし」となり、下記の波・クールダウン
+        判定は行わず、同じ話題の記事もすべて通知する(古い後追い記事の除外だけは効く)。
+        災害情報のように「同じ災害の続報も全部欲しい」フィード向けの設定。
       - 2波目以降: 直前の波が first_n 件で埋まったあと、次の記事は
         以下の**両方**を満たした場合にだけ「次の波」として通知する。
           (a) その記事のpubDateが、直前の波の記事群のうち最も新しいpubDateから
@@ -52,6 +55,9 @@ from email.utils import parsedate_to_datetime
 STATE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "state")
 
 DEFAULT_FIRST_N = 3                     # 1つの波(バッチ)で無条件に通知する件数
+                                        # 0以下を指定すると「上限なし」になり、同じ話題でも
+                                        # (古い後追い記事以外は)すべて通知する。
+                                        # 自然災害系など、続報を全部受け取りたいフィード向け。
 DEFAULT_SIMILARITY_THRESHOLD = 0.2      # タイトル類似度(bigram Dice係数)がこれ以上なら同じ話題とみなす
                                         # 地名などの共通語を含むだけの無関係な記事同士が0.15前後まで上がるため、
                                         # それを誤って同じ話題とみなさない水準に置いている。
@@ -302,6 +308,7 @@ def classify_articles(
     通知するかどうかの判定:
       - 既存クラスタにマッチした(=すでに通知済みの話題)
           - old_ids に入っている(古い記事) → 通知しない
+          - first_n が 0以下(上限なし) → そのまま通知(波の判定を行わない)
           - 現在の波がまだ first_n 件に達していない → そのまま通知(波に追加)
           - 波が first_n 件で埋まっている → 次の両方を満たす場合だけ次の波として通知:
               (a) pubDateが直前の波の最新pubDateから batch_cooldown_minutes 分以上後
@@ -359,7 +366,12 @@ def classify_articles(
                 continue
 
             starting_new_batch = False
-            if best_cluster["batch_open_count"] < first_n:
+            if first_n <= 0:
+                # first_n <= 0 は「1波あたりの上限なし」。同じ話題の記事でも
+                # (古い後追い記事でない限り)すべて通知する。
+                # 自然災害系のように「同じ災害でも各社の続報を全部見たい」フィード向け。
+                notify = True
+            elif best_cluster["batch_open_count"] < first_n:
                 notify = True
             else:
                 article_pub = _parse_pub_date(a.get("pub_date", ""))

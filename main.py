@@ -46,6 +46,8 @@ DEFAULT_FRESH_HOURS = 3          # 記事の公開日がこれより古ければ
 # 同一話題(複数社が同じ出来事を別記事で配信したもの)をまとめるクラスタリングのデフォルト値。
 # いずれも feeds.json 側で "dedup_first_n" / "dedup_similarity_threshold" /
 # "dedup_batch_cooldown_minutes" を指定すればフィードごとに上書きできる。
+# "dedup_first_n" に 0 を指定すると「1波あたりの上限なし」になり、同じ話題の続報も
+# (古い後追い記事以外は)すべて通知する。自然災害系のフィード向けの設定。
 DEFAULT_DEDUP_FIRST_N = dedup.DEFAULT_FIRST_N
 DEFAULT_DEDUP_SIMILARITY_THRESHOLD = dedup.DEFAULT_SIMILARITY_THRESHOLD
 DEFAULT_DEDUP_BATCH_COOLDOWN_MINUTES = dedup.DEFAULT_BATCH_COOLDOWN_MINUTES
@@ -77,6 +79,13 @@ def load_feeds() -> list[dict]:
                 raise RuntimeError(
                     f"feeds.json の '{optional_key}' は整数で指定してください: {feed}"
                 )
+        # dedup_first_n は 0 に「1波あたりの上限なし」という意味を持たせているため、
+        # 負の数(打ち間違い)は弾いて 0以上 だけを許可する
+        if "dedup_first_n" in feed and feed["dedup_first_n"] < 0:
+            raise RuntimeError(
+                f"feeds.json の 'dedup_first_n' は0以上で指定してください"
+                f"(0は「1波あたりの上限なし」の意味): {feed}"
+            )
         for threshold_key in ("dedup_similarity_threshold", "dedup_same_source_threshold"):
             threshold = feed.get(threshold_key)
             if threshold is not None and not (
@@ -216,8 +225,9 @@ def process_feed(feed: dict) -> None:
 
     # 2.6 同一話題(複数社が同じ出来事を別記事で配信したもの)をクラスタリングして間引く。
     #     - すでに通知済みの話題 … 最速 dedup_first_n 件まではそのまま通知。それ以降は、
-    #       同じ配信元が前回より新しいpubDateで改めて報じた場合のみ「続報」として通知する。
-    #       ただし公開から fresh_hours 時間以上経った記事(=後追い報道)は通知しない
+    #       クールダウン(pubDate差・壁時計差の両方)を満たした場合のみ次の波として通知する。
+    #       ただし公開から fresh_hours 時間以上経った記事(=後追い報道)は通知しない。
+    #       dedup_first_n が0の場合は波の上限なし(後追い記事以外はすべて通知)
     #     - 初めての話題 … 公開から時間が経っていても通知する(見逃し防止)
     old_ids = {
         a.id for a in unread_new if is_too_old_for_fresh_notify(a.pub_date, fresh_hours, ctx)
