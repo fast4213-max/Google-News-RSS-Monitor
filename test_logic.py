@@ -1393,6 +1393,56 @@ def test_stale_relative_date_title_skips_outdated_weather_forecast():
                 os.remove(p_)
 
 
+def test_cluster_kept_alive_while_followups_keep_coming():
+    """
+    通知から72時間以上経っても、その間に後追い記事(スキップ分)を見かけ続けていれば
+    クラスタは失効しないこと。
+    実例: 17日の刺傷事件のクラスタが「最後の通知から72時間」で消えた直後、
+    pubDateだけ21日に更新された17日の記事が「初めての話題」とみなされ、23日に通知された。
+    """
+    from datetime import datetime, timedelta, timezone
+
+    feed_id = "test_cluster_keep_alive"
+    path = dedup._clusters_path(feed_id)
+    if os.path.exists(path):
+        os.remove(path)
+
+    def article(article_id, title):
+        return {"id": article_id, "title": title, "link": f"https://example.com/{article_id}", "pub_date": ""}
+
+    t0 = datetime(2026, 9, 17, 11, 0, tzinfo=timezone.utc)
+    try:
+        dedup.classify_articles(
+            feed_id,
+            [article("seed", "スーパーで女性（66）刺される 80歳男を現行犯逮捕 大阪・大東市 - テレ朝NEWS")],
+            now=t0,
+        )
+        # 通知はしないが、毎日のように古い後追い記事が流れてくる
+        for day in range(1, 6):
+            aid = f"old{day}"
+            _, skip = dedup.classify_articles(
+                feed_id,
+                [article(aid, "スーパーで女性（66）刺される 80歳男を現行犯逮捕 大阪・大東市 - KSBニュース")],
+                now=t0 + timedelta(days=day),
+                old_ids={aid},
+            )
+            assert skip == {aid}, (day, skip)
+
+        # 最初の通知から6日後(=72時間を大きく超える)に再配信記事が出てきても通知しない
+        aid = "republished"
+        to_notify, skip = dedup.classify_articles(
+            feed_id,
+            [article(aid, "スーパーで女性（66）刺される80歳男を現行犯逮捕大阪・大東市 - 朝日放送")],
+            now=t0 + timedelta(days=6),
+            old_ids={aid},
+        )
+        assert to_notify == [] and skip == {aid}, (to_notify, skip)
+        print("OK: test_cluster_keep_alive (後追い記事が続く間はクラスタを失効させない)")
+    finally:
+        if os.path.exists(path):
+            os.remove(path)
+
+
 if __name__ == "__main__":
     test_parse_success()
     test_parse_no_channel_raises()
@@ -1425,4 +1475,5 @@ if __name__ == "__main__":
     test_exclude_words_skips_articles_but_marks_them_read()
     test_area_false_match_skips_broadcaster_name_only_articles()
     test_stale_relative_date_title_skips_outdated_weather_forecast()
+    test_cluster_kept_alive_while_followups_keep_coming()
     print("\n全テスト成功")

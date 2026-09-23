@@ -64,7 +64,13 @@ DEFAULT_SIMILARITY_THRESHOLD = 0.2      # タイトル類似度(bigram Dice係�
                                         # 詳細なトレードオフは test_logic.py の
                                         # test_similarity_threshold_reangled_followup_boundary を参照
 DEFAULT_BATCH_COOLDOWN_MINUTES = 30     # 次の波を開くまでのクールダウン(分)。pubDate差・壁時計差の両方に使う
-DEFAULT_CLUSTER_MAX_AGE_HOURS = 72      # これより古いクラスタは破棄する
+DEFAULT_CLUSTER_MAX_AGE_HOURS = 168     # 最後にその話題の記事を見かけてから(通知・スキップ問わず)
+                                        # これ以上経ったクラスタは破棄する。
+                                        # 以前は「最後に通知してから72時間」だったが、大きな事件は
+                                        # Googleニュースが何日も後追い記事を掘り起こし続けるため、
+                                        # 通知から3日でクラスタが消えた直後に古い記事が
+                                        # 「初めての話題」と誤判定されて再通知されていた
+                                        # (17日の事件の記事が23日に通知された事例あり)。
 DEFAULT_SAME_SOURCE_THRESHOLD = 0.6     # 「同じ配信元だけで構成されたクラスタ」に、同じ配信元の記事を
                                         # 合流させるときに要求する類似度。通常の閾値より厳しくする。
                                         # 同じ配信元は定型の見出しテンプレートを使い回すため、
@@ -125,6 +131,9 @@ def load_clusters(feed_id: str) -> list[dict]:
                     c.get("batch_ref_pub_date") if isinstance(c.get("batch_ref_pub_date"), str) else ""
                 ),
                 "last_notified_at": c.get("last_notified_at") or "",
+                # last_seen_at も後から追加した項目。旧形式のstateには無いので
+                # 最後に通知した時刻で代用する。
+                "last_seen_at": c.get("last_seen_at") or c.get("last_notified_at") or "",
             }
         )
     return clusters
@@ -324,11 +333,16 @@ def classify_articles(
     cooldown = timedelta(minutes=batch_cooldown_minutes)
     clusters = load_clusters(feed_id)
 
-    # 古すぎるクラスタは破棄(無関係な後日の記事が誤って同じ話題に混ざるのを防ぐ)
+    # 古すぎるクラスタは破棄(無関係な後日の記事が誤って同じ話題に混ざるのを防ぐ)。
+    # 「最後に通知した時刻」ではなく「最後にその話題の記事を見かけた時刻」で判定する。
+    # 後追い記事が流れ続けている間はクラスタを生かしておかないと、クラスタが消えた途端に
+    # 古い後追い記事が「初めての話題」として通知されてしまうため。
     fresh_clusters = []
     for c in clusters:
-        last_notified = _parse_iso(c.get("last_notified_at", ""))
-        if now - last_notified <= timedelta(hours=cluster_max_age_hours):
+        last_seen = max(
+            _parse_iso(c.get("last_seen_at", "")), _parse_iso(c.get("last_notified_at", ""))
+        )
+        if now - last_seen <= timedelta(hours=cluster_max_age_hours):
             fresh_clusters.append(c)
     clusters = fresh_clusters
 
@@ -360,6 +374,8 @@ def classify_articles(
                 best_required = required
 
         if best_cluster is not None and best_ratio >= best_required:
+            # 通知するかどうかに関わらず「この話題はまだ続いている」ので、失効を先延ばしする
+            best_cluster["last_seen_at"] = now.isoformat()
             # すでに通知済みの話題。配信から時間が経った記事は後追い報道とみなして捨てる
             if a["id"] in old_ids:
                 skip_ids.add(a["id"])
@@ -415,6 +431,7 @@ def classify_articles(
                 "batch_open_count": 1,
                 "batch_ref_pub_date": a.get("pub_date", ""),
                 "last_notified_at": now.isoformat(),
+                "last_seen_at": now.isoformat(),
             }
             clusters.append(new_cluster)
             to_notify.append(dict(a))
