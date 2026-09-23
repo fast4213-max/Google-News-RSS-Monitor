@@ -9,7 +9,8 @@
       ],
       "batch_open_count": 1,
       "batch_ref_pub_date": "Tue, 22 Sep 2026 08:36:45 GMT",
-      "last_notified_at": "2026-09-22T09:10:39.339801+00:00"
+      "last_notified_at": "2026-09-22T09:10:39.339801+00:00",
+      "last_seen_at": "2026-09-22T09:10:39.339801+00:00"
     },
     {
       "titles": [
@@ -20,7 +21,8 @@
       ],
       "batch_open_count": 1,
       "batch_ref_pub_date": "Tue, 22 Sep 2026 07:26:02 GMT",
-      "last_notified_at": "2026-09-22T14:10:36.098111+00:00"
+      "last_notified_at": "2026-09-22T14:10:36.098111+00:00",
+      "last_seen_at": "2026-09-22T14:10:36.098111+00:00"
     },
     {
       "titles": [
@@ -31,7 +33,8 @@
       ],
       "batch_open_count": 1,
       "batch_ref_pub_date": "Tue, 22 Sep 2026 22:30:09 GMT",
-      "last_notified_at": "2026-09-22T23:10:31.117256+00:00"
+      "last_notified_at": "2026-09-22T23:10:31.117256+00:00",
+      "last_seen_at": "2026-09-22T23:10:31.117256+00:00"
     },
     {
       "titles": [
@@ -42,7 +45,8 @@
       ],
       "batch_open_count": 1,
       "batch_ref_pub_date": "Mon, 21 Sep 2026 16:00:49 GMT",
-      "last_notified_at": "2026-09-23T11:10:37.962385+00:00"
+      "last_notified_at": "2026-09-23T11:10:37.962385+00:00",
+      "last_seen_at": "2026-09-23T11:10:37.962385+00:00"
     }
   ]
 }
