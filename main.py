@@ -86,10 +86,27 @@ def load_feeds() -> list[dict]:
             "dedup_first_n",
             "dedup_batch_cooldown_minutes",
         ):
-            if optional_key in feed and not isinstance(feed[optional_key], int):
+            # bool は int のサブクラスなので、true/false の書き間違いを明示的に弾く
+            if optional_key in feed and (
+                not isinstance(feed[optional_key], int) or isinstance(feed[optional_key], bool)
+            ):
                 raise RuntimeError(
                     f"feeds.json の '{optional_key}' は整数で指定してください: {feed}"
                 )
+        # 件数・期間系は 1以上 だけを許可する。0 や負の数(打ち間違い)を通すと、
+        #   - max_per_run: 0 → 1件も通知されずキューが増え続ける / 負 → 末尾の記事だけ持ち越され続ける
+        #   - stale_days / fresh_hours: 0以下 → 全記事が「古い」扱いになり、
+        #     stale_days の場合は通知されないまま全件既読化される
+        # という「エラーにならずに黙って通知が止まる」事故になるため、起動時に止める。
+        for positive_key in ("max_per_run", "stale_days", "fresh_hours"):
+            if positive_key in feed and feed[positive_key] < 1:
+                raise RuntimeError(
+                    f"feeds.json の '{positive_key}' は1以上で指定してください: {feed}"
+                )
+        if "dedup_batch_cooldown_minutes" in feed and feed["dedup_batch_cooldown_minutes"] < 0:
+            raise RuntimeError(
+                f"feeds.json の 'dedup_batch_cooldown_minutes' は0以上で指定してください: {feed}"
+            )
         # dedup_first_n は 0 に「1波あたりの上限なし」という意味を持たせているため、
         # 負の数(打ち間違い)は弾いて 0以上 だけを許可する
         if "dedup_first_n" in feed and feed["dedup_first_n"] < 0:

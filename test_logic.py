@@ -1033,6 +1033,47 @@ def test_feeds_json_is_valid():
     print(f"OK: test_feeds_json_is_valid ({len(feeds)}フィード: {', '.join(ids)})")
 
 
+def test_feeds_json_rejects_non_positive_numbers():
+    """
+    max_per_run / stale_days / fresh_hours に 0・負の数・真偽値を書いた場合は
+    起動時にエラーになることを確認する。
+    これらを素通しすると、例えば stale_days: -1 で全記事が「古い」扱いになり、
+    通知されないまま黙って既読化される(エラーにならないので気付けない)。
+    """
+    import json
+    import tempfile
+
+    original_path = main.FEEDS_PATH
+    base = {"id": "x", "name": "x", "url": "https://example.com/rss", "webhook_env": "E"}
+    bad_cases = [
+        {"max_per_run": 0},
+        {"max_per_run": -1},
+        {"max_per_run": True},
+        {"stale_days": 0},
+        {"stale_days": -1},
+        {"fresh_hours": 0},
+        {"dedup_batch_cooldown_minutes": -5},
+    ]
+    good_cases = [
+        {"max_per_run": 1, "stale_days": 1, "fresh_hours": 1, "dedup_batch_cooldown_minutes": 0},
+    ]
+    with tempfile.TemporaryDirectory() as d:
+        main.FEEDS_PATH = os.path.join(d, "feeds.json")
+        try:
+            for extra in bad_cases + good_cases:
+                with open(main.FEEDS_PATH, "w", encoding="utf-8") as f:
+                    json.dump([{**base, **extra}], f)
+                try:
+                    main.load_feeds()
+                    accepted = True
+                except RuntimeError:
+                    accepted = False
+                assert accepted == (extra in good_cases), f"判定が想定と異なります: {extra}"
+        finally:
+            main.FEEDS_PATH = original_path
+    print("OK: test_feeds_json_rejects_non_positive_numbers")
+
+
 def test_rss_retries_on_temporary_failure():
     """
     Google News側の一時的な503は自動で再試行され、
@@ -1379,6 +1420,7 @@ if __name__ == "__main__":
     test_stale_queue_entries_are_cleaned_up()
     test_first_n_zero_notifies_every_article_in_topic()
     test_feeds_json_is_valid()
+    test_feeds_json_rejects_non_positive_numbers()
     test_rss_retries_on_temporary_failure()
     test_exclude_words_skips_articles_but_marks_them_read()
     test_area_false_match_skips_broadcaster_name_only_articles()
