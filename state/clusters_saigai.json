@@ -56,6 +56,17 @@
       "batch_open_count": 1,
       "batch_ref_pub_date": "Mon, 21 Sep 2026 10:11:00 GMT",
       "last_notified_at": "2026-09-22T21:10:34.662651+00:00"
+    },
+    {
+      "titles": [
+        "死者９人不明４人に台風２５号"
+      ],
+      "sources": [
+        "東大阪経済新聞"
+      ],
+      "batch_open_count": 1,
+      "batch_ref_pub_date": "Wed, 23 Sep 2026 03:08:06 GMT",
+      "last_notified_at": "2026-09-23T03:10:33.153082+00:00"
     }
   ]
 }
