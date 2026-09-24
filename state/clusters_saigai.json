@@ -151,6 +151,18 @@
       "batch_ref_pub_date": "Thu, 24 Sep 2026 06:51:00 GMT",
       "last_notified_at": "2026-09-24T08:10:34.074617+00:00",
       "last_seen_at": "2026-09-24T08:10:34.074617+00:00"
+    },
+    {
+      "titles": [
+        "気象庁によりますと台風26号（スリゲ）はフィリピンの東を時速25kmの速さで西北西へ進んでいます"
+      ],
+      "sources": [
+        "TBS NEWS DIG"
+      ],
+      "batch_open_count": 1,
+      "batch_ref_pub_date": "Thu, 24 Sep 2026 05:13:00 GMT",
+      "last_notified_at": "2026-09-24T09:10:35.183907+00:00",
+      "last_seen_at": "2026-09-24T09:10:35.183907+00:00"
     }
   ]
 }
