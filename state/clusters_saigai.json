@@ -193,6 +193,18 @@
       "batch_ref_pub_date": "Fri, 25 Sep 2026 05:50:37 GMT",
       "last_notified_at": "2026-09-25T06:10:31.961363+00:00",
       "last_seen_at": "2026-09-25T06:10:31.961363+00:00"
+    },
+    {
+      "titles": [
+        "あす25日は朝から雨に注意10月中旬ぐらいの気温来週は台風接近か"
+      ],
+      "sources": [
+        "news.ntv.co.jp"
+      ],
+      "batch_open_count": 1,
+      "batch_ref_pub_date": "Fri, 25 Sep 2026 10:07:00 GMT",
+      "last_notified_at": "2026-09-25T13:10:38.079458+00:00",
+      "last_seen_at": "2026-09-25T13:10:38.079458+00:00"
     }
   ]
 }
