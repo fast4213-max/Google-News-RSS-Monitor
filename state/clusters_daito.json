@@ -179,6 +179,18 @@
       "batch_ref_pub_date": "Sat, 26 Sep 2026 22:21:31 GMT",
       "last_notified_at": "2026-09-26T23:10:31.933096+00:00",
       "last_seen_at": "2026-09-26T23:10:31.933096+00:00"
+    },
+    {
+      "titles": [
+        "地域交流会に参加"
+      ],
+      "sources": [
+        "選挙ドットコム"
+      ],
+      "batch_open_count": 1,
+      "batch_ref_pub_date": "Sun, 27 Sep 2026 12:30:13 GMT",
+      "last_notified_at": "2026-09-27T13:10:31.445703+00:00",
+      "last_seen_at": "2026-09-27T13:10:31.445703+00:00"
     }
   ]
 }
