@@ -866,7 +866,7 @@ def test_queued_article_is_not_dropped_on_next_run():
     original_send = notifier.send_articles
     original_error = notifier.send_error
 
-    def fake_send_articles(webhook_env, feed_name, articles, max_count):
+    def fake_send_articles(webhook_env, feed_name, articles, max_count, failed=None):
         delivered = articles[:max_count]
         sent_ids.extend(a["id"] for a in delivered)
         return delivered
@@ -1175,7 +1175,7 @@ def test_exclude_words_skips_articles_but_marks_them_read():
     original_send = notifier.send_articles
     original_error = notifier.send_error
 
-    def fake_send_articles(webhook_env, feed_name, arts, max_count):
+    def fake_send_articles(webhook_env, feed_name, arts, max_count, failed=None):
         delivered = arts[:max_count]
         sent_ids.extend(a["id"] for a in delivered)
         return delivered
@@ -1259,7 +1259,7 @@ def test_area_false_match_skips_broadcaster_name_only_articles():
     original_send = notifier.send_articles
     original_error = notifier.send_error
 
-    def fake_send_articles(webhook_env, feed_name, arts, max_count):
+    def fake_send_articles(webhook_env, feed_name, arts, max_count, failed=None):
         delivered = arts[:max_count]
         sent_ids.extend(a["id"] for a in delivered)
         return delivered
@@ -1365,7 +1365,7 @@ def test_stale_relative_date_title_skips_outdated_weather_forecast():
     original_send = notifier.send_articles
     original_error = notifier.send_error
 
-    def fake_send_articles(webhook_env, feed_name, arts, max_count):
+    def fake_send_articles(webhook_env, feed_name, arts, max_count, failed=None):
         delivered = arts[:max_count]
         sent_ids.extend(a["id"] for a in delivered)
         return delivered
@@ -1443,6 +1443,91 @@ def test_cluster_kept_alive_while_followups_keep_coming():
             os.remove(path)
 
 
+def test_bad_payload_article_does_not_block_queue():
+    """
+    内容が不正でDiscordに拒否される(400)記事が1件あっても、その記事だけを
+    state/failed_<id>.json に退避して後続の送信を続けること。
+    以前はそこで送信が打ち切られ、その記事がキューの先頭に居座って
+    以降の記事が永久に通知されなくなっていた。
+    また送信が途中で止まった場合はシステム通知チャンネルに知らせること。
+    """
+    import io
+    import urllib.error
+    import urllib.request
+    from datetime import datetime, timezone
+    from email.utils import format_datetime
+
+    import notifier
+    import state_manager
+
+    feed_id = "test_bad_payload"
+    feed = {"id": feed_id, "name": "テスト", "url": "https://example.invalid/rss",
+            "webhook_env": "TEST_BAD_PAYLOAD_WEBHOOK", "dedup_first_n": 0}
+    paths = [state_manager._read_path(feed_id), state_manager._queue_path(feed_id),
+             state_manager._failed_path(feed_id), dedup._clusters_path(feed_id)]
+    pub = format_datetime(datetime.now(timezone.utc))
+    articles = [
+        rss.Article(id="p3", title="図書館が新装開館 - C新聞", link="https://example.com/p3", pub_date=pub),
+        rss.Article(id="p2", title="不正なリンクの記事 - B新聞", link="not-a-url", pub_date=pub),
+        rss.Article(id="p1", title="市長が記者会見 - A新聞", link="https://example.com/p1", pub_date=pub),
+    ]
+    posted, errors = [], []
+
+    class _Res:
+        status = 204
+        def __enter__(self): return self
+        def __exit__(self, *a): pass
+
+    def fake_urlopen(req, timeout=0):
+        import json as _json
+        embed = _json.loads(req.data)["embeds"][0]
+        if not embed["url"].startswith("http"):
+            raise urllib.error.HTTPError(req.full_url, 400, "Bad Request", {},
+                                         io.BytesIO(b'{"embeds": ["0"]}'))
+        posted.append(embed["url"])
+        return _Res()
+
+    original = (rss.fetch_articles, urllib.request.urlopen, notifier.send_error,
+                notifier.SEND_INTERVAL_SECONDS)
+    try:
+        for p in paths:
+            if os.path.exists(p):
+                os.remove(p)
+        os.environ["TEST_BAD_PAYLOAD_WEBHOOK"] = "https://discord.invalid/webhook"
+        rss.fetch_articles = lambda url: articles
+        urllib.request.urlopen = fake_urlopen
+        notifier.send_error = lambda ctx, msg: errors.append(msg)
+        notifier.SEND_INTERVAL_SECONDS = 0
+
+        main.process_feed(feed)
+        assert posted == ["https://example.com/p1", "https://example.com/p3"], posted
+        assert state_manager.load_queue(feed_id) == []
+        assert set(state_manager.load_read_ids(feed_id)) == {"p1", "p2", "p3"}
+        failed = state_manager._load_json(state_manager._failed_path(feed_id), {})["items"]
+        assert [f["id"] for f in failed] == ["p2"], failed
+        assert len(errors) == 1, errors
+        print("OK: test_bad_payload (不正な1件だけ退避し後続は送信される)")
+
+        # Webhookの環境変数が未設定なら、全件キューに残しシステム通知する
+        for p in paths:
+            if os.path.exists(p):
+                os.remove(p)
+        del os.environ["TEST_BAD_PAYLOAD_WEBHOOK"]
+        posted.clear(); errors.clear()
+        main.process_feed(feed)
+        assert posted == []
+        assert len(state_manager.load_queue(feed_id)) == 3
+        assert len(errors) == 1 and "Webhook" in errors[0], errors
+        print("OK: test_bad_payload (送信が止まったらシステム通知する)")
+    finally:
+        (rss.fetch_articles, urllib.request.urlopen, notifier.send_error,
+         notifier.SEND_INTERVAL_SECONDS) = original
+        os.environ.pop("TEST_BAD_PAYLOAD_WEBHOOK", None)
+        for p in paths:
+            if os.path.exists(p):
+                os.remove(p)
+
+
 if __name__ == "__main__":
     test_parse_success()
     test_parse_no_channel_raises()
@@ -1476,4 +1561,5 @@ if __name__ == "__main__":
     test_area_false_match_skips_broadcaster_name_only_articles()
     test_stale_relative_date_title_skips_outdated_weather_forecast()
     test_cluster_kept_alive_while_followups_keep_coming()
+    test_bad_payload_article_does_not_block_queue()
     print("\n全テスト成功")

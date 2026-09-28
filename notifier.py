@@ -40,6 +40,14 @@ USER_AGENT = (
 )
 
 EMBED_TITLE_MAX_LENGTH = 256  # Discord embed titleの上限文字数(超えると400エラーになる)
+# 送信内容そのものが原因で何度送っても通らない(=再試行しても無駄な)HTTPステータス。
+# 401/403/404 は「Webhook URLが無効・削除済み」という設定の問題で、記事を入れ替えても
+# 直らないため含めない(その場合は送信を打ち切り、全件を次回に持ち越す)。
+PAYLOAD_ERROR_STATUS = {400, 413, 422}
+
+
+class DiscordPayloadError(RuntimeError):
+    """記事の内容(不正なURL形式など)が原因でDiscordに拒否された。再送しても通らない。"""
 
 
 def _resolve_webhook_url(webhook_env: str) -> str:
@@ -109,6 +117,10 @@ def _post(webhook_env: str, body: dict) -> None:
                 raise RuntimeError(
                     f"レート制限(429)が{RATE_LIMIT_MAX_RETRIES}回の再試行後も解消しませんでした"
                 ) from e
+            if e.code in PAYLOAD_ERROR_STATUS:
+                raise DiscordPayloadError(
+                    f"Discordが送信内容を拒否しました status={e.code} body={error_body}"
+                ) from e
             raise RuntimeError(
                 f"Discord送信でHTTPエラー status={e.code} body={error_body}"
             ) from e
@@ -141,7 +153,9 @@ def send_article(webhook_env: str, feed_name: str, title: str, link: str) -> Non
     logger.info(_CONTEXT, f"通知送信OK ({webhook_env}): {title}")
 
 
-def send_articles(webhook_env: str, feed_name: str, articles: list, max_count: int) -> list:
+def send_articles(
+    webhook_env: str, feed_name: str, articles: list, max_count: int, failed: list | None = None
+) -> list:
     """
     複数記事をまとめて、指定のWebhook(フィード専用チャンネル)に送信する。
     Discordのレート制限を避けるため間隔を空けて送信し、429時は _post 内で
@@ -155,13 +169,35 @@ def send_articles(webhook_env: str, feed_name: str, articles: list, max_count: i
     残りは次回に持ち越す」という扱いができ、レート制限で一部だけ失敗した際に
     既に送信済みの記事が重複通知されるのを防ぐ。
 
-    戻り値: 実際に送信できた記事のリスト(先頭から連続する成功分)
+    ただし、記事の内容そのものが原因でDiscordに拒否された(400など、DiscordPayloadError)
+    場合は、その1件だけを failed に入れて次の記事の送信を続ける。ここで打ち切ると、
+    その記事がキューの先頭に居座って毎回同じ所で止まり、以降の記事が永久に
+    通知されなくなるため。failed に入れた記事は呼び出し元が別ファイルに退避する
+    (捨てずに残すので、後から中身を確認して再送できる)。
+    failed を渡さなかった場合は、従来どおりそこで送信を打ち切る。
+
+    戻り値: 実際に送信できた記事のリスト
     """
     to_send = articles[:max_count]
     sent = []
     for i, article in enumerate(to_send):
         try:
             send_article(webhook_env, feed_name, article["title"], article["link"])
+        except DiscordPayloadError as e:
+            if failed is None:
+                logger.error(
+                    _CONTEXT,
+                    f"{i + 1}/{len(to_send)}件目の送信に失敗したため、ここで送信を打ち切ります"
+                    f"（{len(sent)}件は送信済み・既読化されます）: {e}",
+                )
+                break
+            logger.error(
+                _CONTEXT,
+                f"{i + 1}/{len(to_send)}件目は内容が不正なため送信できませんでした。"
+                f"この1件だけ退避して送信を続けます: {article.get('title')!r} {e}",
+            )
+            failed.append(article)
+            continue
         except Exception as e:
             logger.error(
                 _CONTEXT,

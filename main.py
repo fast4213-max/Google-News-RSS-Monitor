@@ -466,8 +466,9 @@ def process_feed(feed: dict) -> None:
     #    (詳細は notifier.send_articles のdocstring参照)。
     #    ここでの try/except は、send_articles 呼び出し自体が想定外の形で
     #    失敗した場合の保険。
+    failed: list[dict] = []
     try:
-        sent = notifier.send_articles(webhook_env, feed_name, pending, max_per_run)
+        sent = notifier.send_articles(webhook_env, feed_name, pending, max_per_run, failed=failed)
     except Exception as e:
         msg = logger.error(ctx, f"Discord送信処理そのものが異常終了しました: {e}", exc=e)
         notifier.send_error(ctx, msg)
@@ -475,19 +476,38 @@ def process_feed(feed: dict) -> None:
         state_manager.save_queue(feed_id, pending)
         return
 
-    if len(sent) < len(pending[:max_per_run]):
-        # 送信予定件数に対して実際に送れた件数が少ない = 途中でレート制限等により打ち切られた
-        logger.warn(
-            ctx,
-            f"送信予定{len(pending[:max_per_run])}件のうち{len(sent)}件しか送信できませんでした。"
-            "残りは次回に持ち越します(重複通知は起きません)。",
+    planned = len(pending[:max_per_run])
+    if len(sent) + len(failed) < planned:
+        # 送信予定件数に対して実際に処理できた件数が少ない = 途中でレート制限・
+        # Webhook設定ミス(環境変数未設定、URL無効)等により打ち切られた。
+        # ログに出すだけだとActionsの実行は成功扱いのままで誰も気付かず、
+        # キューが溜まり続けるため、システム通知チャンネルにも知らせる。
+        msg = (
+            f"送信予定{planned}件のうち{len(sent)}件しか送信できませんでした。"
+            "残りは次回に持ち越します(重複通知は起きません)。"
+            "繰り返し出る場合は Webhook の設定(GitHub Secrets)を確認してください。"
         )
+        logger.warn(ctx, msg)
+        notifier.send_error(ctx, msg)
+
+    if failed:
+        # 内容が不正でDiscordに拒否された記事は、キューに戻すと毎回先頭で詰まるため
+        # state/failed_<id>.json に退避し(捨てない)、既読扱いにして再判定させない。
+        state_manager.append_failed(feed_id, failed)
+        state_manager.append_read_ids(feed_id, [a["id"] for a in failed])
+        msg = logger.error(
+            ctx,
+            f"内容が不正でDiscordに拒否された記事を{len(failed)}件、"
+            f"state/failed_{feed_id}.json に退避しました: "
+            + ", ".join(repr(a.get("title")) for a in failed[:5]),
+        )
+        notifier.send_error(ctx, msg)
 
     # 5. 送信できた分だけ既読化し、残りはqueueに保存(破棄しない)
     state_manager.append_read_ids(feed_id, [a["id"] for a in sent])
-    sent_ids = {a["id"] for a in sent}
+    done_ids = {a["id"] for a in sent} | {a["id"] for a in failed}
 
-    remaining = [p for p in pending if p["id"] not in sent_ids]
+    remaining = [p for p in pending if p["id"] not in done_ids]
     state_manager.save_queue(feed_id, remaining)
 
     logger.info(

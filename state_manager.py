@@ -5,6 +5,7 @@
 保存場所:
   state/read_<feed_id>.json   … 通知済み(既読)の記事ID一覧
   state/queue_<feed_id>.json  … 未読だが今回まだ通知しきれなかった記事(次回に持ち越し)
+  state/failed_<feed_id>.json … 内容が不正でDiscordに拒否された記事(捨てずに退避)
 
 方針:
   - フィードごとにファイルを分割 → フィードが増えても1ファイルが肥大化しない。
@@ -35,6 +36,10 @@ def _queue_path(feed_id: str) -> str:
     return os.path.join(STATE_DIR, f"queue_{feed_id}.json")
 
 
+def _failed_path(feed_id: str) -> str:
+    return os.path.join(STATE_DIR, f"failed_{feed_id}.json")
+
+
 def _load_json(path: str, default):
     if not os.path.exists(path):
         return default
@@ -55,7 +60,9 @@ def _save_json(path: str, data) -> None:
 def load_read_id_list(feed_id: str) -> list[str]:
     """既読済み記事IDを「既読になった順(古い順)」のリストで読み込む。"""
     data = _load_json(_read_path(feed_id), {"ids": []})
-    ids = data.get("ids", [])
+    ids = data.get("ids", []) if isinstance(data, dict) else []
+    if not isinstance(ids, list):
+        return []
     return [i for i in ids if isinstance(i, str)]
 
 
@@ -96,7 +103,7 @@ def load_queue(feed_id: str) -> list[dict]:
     (実際にクラスタstateで同種の事故が起きた)、クラスタ読み込みと同じ方針で防御的にする。
     """
     data = _load_json(_queue_path(feed_id), {"items": []})
-    raw_items = data.get("items", [])
+    raw_items = data.get("items", []) if isinstance(data, dict) else []
     if not isinstance(raw_items, list):
         return []
     items = []
@@ -121,3 +128,25 @@ def load_queue(feed_id: str) -> list[dict]:
 def save_queue(feed_id: str, items: list[dict]) -> None:
     """次回に持ち越す未通知記事のリストを保存する。"""
     _save_json(_queue_path(feed_id), {"items": items})
+
+
+MAX_FAILED_ITEMS_PER_FEED = 200  # 退避ファイルの上限。超えたら古い方から間引く
+
+
+def append_failed(feed_id: str, items: list[dict]) -> None:
+    """
+    内容が不正でDiscordに拒否された記事を state/failed_<feed_id>.json に追記する。
+    キューに戻すと毎回先頭で詰まり後続が送れなくなるため、キューとは別に退避する。
+    """
+    if not items:
+        return
+    data = _load_json(_failed_path(feed_id), {"items": []})
+    existing = data.get("items", []) if isinstance(data, dict) else []
+    if not isinstance(existing, list):
+        existing = []
+    known = {i.get("id") for i in existing if isinstance(i, dict)}
+    for item in items:
+        if item.get("id") not in known:
+            existing.append(item)
+            known.add(item.get("id"))
+    _save_json(_failed_path(feed_id), {"items": existing[-MAX_FAILED_ITEMS_PER_FEED:]})
