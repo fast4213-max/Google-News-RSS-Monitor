@@ -221,6 +221,18 @@
       "batch_ref_pub_date": "Sat, 03 Oct 2026 03:06:32 GMT",
       "last_notified_at": "2026-10-03T10:10:34.082275+00:00",
       "last_seen_at": "2026-10-03T10:10:34.082275+00:00"
+    },
+    {
+      "titles": [
+        "警本部＝大阪市中央区"
+      ],
+      "sources": [
+        "産経ニュース"
+      ],
+      "batch_open_count": 1,
+      "batch_ref_pub_date": "Sat, 03 Oct 2026 03:14:51 GMT",
+      "last_notified_at": "2026-10-03T11:10:34.423046+00:00",
+      "last_seen_at": "2026-10-03T11:10:34.423046+00:00"
     }
   ]
 }
