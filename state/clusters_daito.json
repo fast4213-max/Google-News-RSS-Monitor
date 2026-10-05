@@ -272,7 +272,19 @@
       "batch_open_count": 2,
       "batch_ref_pub_date": "Mon, 05 Oct 2026 04:15:34 GMT",
       "last_notified_at": "2026-10-05T05:10:31.959295+00:00",
-      "last_seen_at": "2026-10-05T05:10:31.959295+00:00"
+      "last_seen_at": "2026-10-05T08:10:39.622425+00:00"
+    },
+    {
+      "titles": [
+        "スズキにスズキ部品センタ大阪を新設"
+      ],
+      "sources": [
+        "日本経済新聞"
+      ],
+      "batch_open_count": 1,
+      "batch_ref_pub_date": "Mon, 05 Oct 2026 07:34:59 GMT",
+      "last_notified_at": "2026-10-05T08:10:39.622425+00:00",
+      "last_seen_at": "2026-10-05T08:10:39.622425+00:00"
     }
   ]
 }
