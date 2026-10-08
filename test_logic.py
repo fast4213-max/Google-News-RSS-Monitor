@@ -6,9 +6,13 @@
 """
 import os
 
+import article_date
 import dedup
 import main
 import rss
+
+# テスト中に実ネットワークへアクセスしないよう、元記事の公開日取得は「不明」を返すスタブにする
+article_date.fetch_published_at = lambda link, ctx: None
 
 SAMPLE_RSS = """<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0">
@@ -1528,6 +1532,19 @@ def test_bad_payload_article_does_not_block_queue():
                 os.remove(p)
 
 
+
+def test_real_publish_date_extraction():
+    """元記事HTMLから本当の公開日を読めること(pubDateが再インデックスで新しくなる対策)。"""
+    from datetime import datetime, timezone
+    now = datetime(2026, 10, 8, tzinfo=timezone.utc)
+    ex = article_date.extract_published_at
+    assert ex('<meta property="article:published_time" content="2026-10-06T19:32:01+09:00">', now).day == 6
+    assert ex("<p>06/26 12:32 配信</p>", now).isoformat() == "2026-06-26T12:32:00+09:00"
+    assert ex("<p>12/30 12:32 配信</p>", datetime(2027, 1, 2, tzinfo=timezone.utc)).year == 2026
+    assert ex("<p>日付なし</p>", now) is None
+    print("OK: test_real_publish_date_extraction")
+
+
 if __name__ == "__main__":
     test_parse_success()
     test_parse_no_channel_raises()
@@ -1562,4 +1579,6 @@ if __name__ == "__main__":
     test_stale_relative_date_title_skips_outdated_weather_forecast()
     test_cluster_kept_alive_while_followups_keep_coming()
     test_bad_payload_article_does_not_block_queue()
+    test_real_publish_date_extraction()
     print("\n全テスト成功")
+

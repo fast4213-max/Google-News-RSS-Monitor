@@ -33,6 +33,7 @@ import re
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 
+import article_date
 import dedup
 import logger
 import notifier
@@ -48,6 +49,7 @@ _JST = timezone(timedelta(hours=9))
 _RELATIVE_DATE_TITLE_RE = re.compile(r"(?:あす|明日)(\d{1,2})日")
 DEFAULT_MAX_NOTIFY_PER_RUN = 50  # 1フィードあたり1回で通知する上限件数のデフォルト値
 DEFAULT_STALE_ARTICLE_DAYS = 3   # 記事の公開日がこれより古ければ「既読化のみ」で通知しないデフォルト値(日単位、大昔の記事対策)
+MAX_REAL_DATE_CHECKS_PER_RUN = 30  # 元記事の公開日確認(HTTPアクセス)を1フィード1回で行う上限。超えた分は確認せず通知する
 DEFAULT_FRESH_HOURS = 3          # 記事の公開日がこれより古ければ「古い記事」として扱うデフォルト値(時間単位)
                                  # 「古い記事」は、すでに通知済みの話題の後追いなら通知せず、
                                  # 初めての話題なら(見逃し防止のため)通知する。詳細は dedup.classify_articles 参照
@@ -397,6 +399,23 @@ def process_feed(feed: dict) -> None:
                 f"地域名が配信元名などの一部でしかない記事を{len(false_area_ids)}件、"
                 "通知せず既読化しました",
             )
+        unread_new = [a for a in unread_new if a.id not in read_ids]
+
+    # 2.57 Googleニュースの pubDate は、元記事が再インデックスされると新しい時刻に
+    #      なることがある(6/26配信の記事が10/8の pubDate で届いた実例あり)。
+    #      pubDate を信用しきれないため、通知対象の記事は元記事を開いて本当の公開日を確認し、
+    #      stale_days より古ければ既読化のみして通知しない。
+    #      公開日が分からなかった場合は、見逃しを避けるため通知する。
+    real_old_ids = []
+    for a in unread_new[-MAX_REAL_DATE_CHECKS_PER_RUN:]:  # 新しい方を優先して確認
+        real = article_date.fetch_published_at(a.link, ctx)
+        if real is not None and real < datetime.now(timezone.utc) - timedelta(days=stale_days):
+            real_old_ids.append(a.id)
+            logger.info(ctx, f"元記事の公開日が古いため通知しません: {real.isoformat()} {a.title}")
+    if real_old_ids:
+        old_in_order = [a.id for a in unread_new if a.id in set(real_old_ids)]
+        state_manager.append_read_ids(feed_id, old_in_order)
+        read_ids = read_ids | set(real_old_ids)
         unread_new = [a for a in unread_new if a.id not in read_ids]
 
     # 2.6 同一話題(複数社が同じ出来事を別記事で配信したもの)をクラスタリングして間引く。
