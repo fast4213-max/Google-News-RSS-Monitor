@@ -2,18 +2,6 @@
   "clusters": [
     {
       "titles": [
-        "シリズ京阪百貨店すみのどう店の期間限定ショップ今回は2店舗と思い出横丁の紹介"
-      ],
-      "sources": [
-        "地域ニュースサイト号外NET"
-      ],
-      "batch_open_count": 1,
-      "batch_ref_pub_date": "Thu, 01 Oct 2026 22:21:44 GMT",
-      "last_notified_at": "2026-10-01T23:10:30.953532+00:00",
-      "last_seen_at": "2026-10-01T23:10:30.953532+00:00"
-    },
-    {
-      "titles": [
         "の北条小中学校の小中一貫校新しい学校名は6案に"
       ],
       "sources": [
@@ -279,6 +267,30 @@
       "batch_ref_pub_date": "Thu, 08 Oct 2026 14:10:02 GMT",
       "last_notified_at": "2026-10-08T15:10:35.126661+00:00",
       "last_seen_at": "2026-10-08T18:10:29.863399+00:00"
+    },
+    {
+      "titles": [
+        "シリズ京阪百貨店すみのどう店の期間限定ショップ今回も2店舗の紹介"
+      ],
+      "sources": [
+        "地域ニュースサイト号外NET"
+      ],
+      "batch_open_count": 1,
+      "batch_ref_pub_date": "Thu, 08 Oct 2026 22:21:12 GMT",
+      "last_notified_at": "2026-10-08T23:10:31.579197+00:00",
+      "last_seen_at": "2026-10-08T23:10:31.579197+00:00"
+    },
+    {
+      "titles": [
+        "観客も参戦するドロン戦で日韓交流10月24日（FINDERS）"
+      ],
+      "sources": [
+        "Yahoo!ニュース"
+      ],
+      "batch_open_count": 1,
+      "batch_ref_pub_date": "Thu, 08 Oct 2026 22:31:00 GMT",
+      "last_notified_at": "2026-10-08T23:10:31.579197+00:00",
+      "last_seen_at": "2026-10-08T23:10:31.579197+00:00"
     }
   ]
 }
