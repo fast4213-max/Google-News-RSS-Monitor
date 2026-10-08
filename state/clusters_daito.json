@@ -266,15 +266,17 @@
     },
     {
       "titles": [
+        "自治体DX推進＞避難所受付のアナログ課題を解決するマイ避難所DXライトの防災訓練で実証実験を実施",
         "自治体DX推進＞避難所受付のアナログ課題を解決するマイ避難所DXライトの防災訓練で実証実験を実施"
       ],
       "sources": [
-        "PR TIMES"
+        "PR TIMES",
+        "時事ドットコム"
       ],
-      "batch_open_count": 1,
-      "batch_ref_pub_date": "Thu, 08 Oct 2026 02:00:02 GMT",
-      "last_notified_at": "2026-10-08T02:10:35.864727+00:00",
-      "last_seen_at": "2026-10-08T02:10:35.864727+00:00"
+      "batch_open_count": 2,
+      "batch_ref_pub_date": "Thu, 08 Oct 2026 04:16:00 GMT",
+      "last_notified_at": "2026-10-08T05:10:35.081721+00:00",
+      "last_seen_at": "2026-10-08T05:10:35.081721+00:00"
     }
   ]
 }
