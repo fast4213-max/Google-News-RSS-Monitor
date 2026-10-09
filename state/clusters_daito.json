@@ -2,18 +2,6 @@
   "clusters": [
     {
       "titles": [
-        "2026年10月3日4日週末開催の無料イベント7選マルシェ＆秋祭り＆バザルも"
-      ],
-      "sources": [
-        "いこーよニュース"
-      ],
-      "batch_open_count": 1,
-      "batch_ref_pub_date": "Thu, 01 Oct 2026 22:32:55 GMT",
-      "last_notified_at": "2026-10-02T08:10:33.313704+00:00",
-      "last_seen_at": "2026-10-02T08:10:33.313704+00:00"
-    },
-    {
-      "titles": [
         "ポップタウン住道オペラパクでの魅力をご紹介だいとうの魅力発見展を開催します"
       ],
       "sources": [
@@ -279,6 +267,30 @@
       "batch_ref_pub_date": "Thu, 08 Oct 2026 22:31:00 GMT",
       "last_notified_at": "2026-10-08T23:10:31.579197+00:00",
       "last_seen_at": "2026-10-08T23:10:31.579197+00:00"
+    },
+    {
+      "titles": [
+        "観るだけじゃない自分も飛ばせるDRONEGAMES2026がで初開催"
+      ],
+      "sources": [
+        "finders.me"
+      ],
+      "batch_open_count": 1,
+      "batch_ref_pub_date": "Fri, 09 Oct 2026 05:53:43 GMT",
+      "last_notified_at": "2026-10-09T09:10:29.187097+00:00",
+      "last_seen_at": "2026-10-09T09:10:29.187097+00:00"
+    },
+    {
+      "titles": [
+        "の地域の明かりを守るために防犯灯の電気料金全額補助の継続を"
+      ],
+      "sources": [
+        "選挙ドットコム"
+      ],
+      "batch_open_count": 1,
+      "batch_ref_pub_date": "Fri, 09 Oct 2026 08:48:14 GMT",
+      "last_notified_at": "2026-10-09T09:10:29.187097+00:00",
+      "last_seen_at": "2026-10-09T09:10:29.187097+00:00"
     }
   ]
 }
