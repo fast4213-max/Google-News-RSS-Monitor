@@ -2,20 +2,6 @@
   "clusters": [
     {
       "titles": [
-        "モノづくりが体験できる祭典オプンファクトリファクトリズム＆コンタクト同時期開催",
-        "モノづくりが体験できる祭典オプンファクトリファクトリズム＆コンタクト同時期開催"
-      ],
-      "sources": [
-        "Newscast.jp",
-        "ニコニコニュース"
-      ],
-      "batch_open_count": 2,
-      "batch_ref_pub_date": "Mon, 05 Oct 2026 04:15:34 GMT",
-      "last_notified_at": "2026-10-05T05:10:31.959295+00:00",
-      "last_seen_at": "2026-10-07T07:10:38.146018+00:00"
-    },
-    {
-      "titles": [
         "深北緑地の公園北側スロプなど複数箇所の改修工事が完了してる"
       ],
       "sources": [
@@ -225,6 +211,18 @@
       "batch_ref_pub_date": "Wed, 14 Oct 2026 01:00:00 GMT",
       "last_notified_at": "2026-10-14T03:10:36.358909+00:00",
       "last_seen_at": "2026-10-14T03:10:36.358909+00:00"
+    },
+    {
+      "titles": [
+        "区分マンション|収益物件数No1不動産投資サイト"
+      ],
+      "sources": [
+        "rakumachi.jp"
+      ],
+      "batch_open_count": 1,
+      "batch_ref_pub_date": "Wed, 14 Oct 2026 07:58:03 GMT",
+      "last_notified_at": "2026-10-14T08:10:32.488920+00:00",
+      "last_seen_at": "2026-10-14T08:10:32.488920+00:00"
     }
   ]
 }
