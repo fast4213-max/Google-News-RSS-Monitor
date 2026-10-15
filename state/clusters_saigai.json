@@ -37,6 +37,18 @@
       "batch_ref_pub_date": "Tue, 13 Oct 2026 22:59:13 GMT",
       "last_notified_at": "2026-10-14T01:10:40.197184+00:00",
       "last_seen_at": "2026-10-14T01:10:40.197184+00:00"
+    },
+    {
+      "titles": [
+        "台風30号(2026年)日本気象協会tenkijp"
+      ],
+      "sources": [
+        "tenki.jp"
+      ],
+      "batch_open_count": 1,
+      "batch_ref_pub_date": "Thu, 15 Oct 2026 09:50:00 GMT",
+      "last_notified_at": "2026-10-15T11:10:35.456794+00:00",
+      "last_seen_at": "2026-10-15T11:10:35.456794+00:00"
     }
   ]
 }
