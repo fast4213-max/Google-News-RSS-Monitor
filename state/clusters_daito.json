@@ -16,18 +16,6 @@
     },
     {
       "titles": [
-        "立四条小学校の第13回運動会"
-      ],
-      "sources": [
-        "選挙ドットコム"
-      ],
-      "batch_open_count": 1,
-      "batch_ref_pub_date": "Sat, 10 Oct 2026 06:48:14 GMT",
-      "last_notified_at": "2026-10-10T07:10:28.960136+00:00",
-      "last_seen_at": "2026-10-10T07:10:28.960136+00:00"
-    },
-    {
-      "titles": [
         "から全国へ別居親の行事参加を変えた地方自治の力"
       ],
       "sources": [
@@ -88,15 +76,17 @@
     },
     {
       "titles": [
-        "部活動地域展開を進めるメディア部の中学生が夜間議会で基調講演"
+        "部活動地域展開を進めるメディア部の中学生が夜間議会で基調講演",
+        "中学生4人が夜間議会で基調講演全国入選動画おやつを上映地域クラブメディア部"
       ],
       "sources": [
-        "valuepress"
+        "valuepress",
+        "Dtimes"
       ],
-      "batch_open_count": 1,
-      "batch_ref_pub_date": "Tue, 13 Oct 2026 06:00:00 GMT",
-      "last_notified_at": "2026-10-13T07:10:29.722819+00:00",
-      "last_seen_at": "2026-10-13T07:10:29.722819+00:00"
+      "batch_open_count": 2,
+      "batch_ref_pub_date": "Sat, 17 Oct 2026 07:09:45 GMT",
+      "last_notified_at": "2026-10-17T07:10:32.380793+00:00",
+      "last_seen_at": "2026-10-17T07:10:32.380793+00:00"
     },
     {
       "titles": [
@@ -195,6 +185,18 @@
       "batch_ref_pub_date": "Fri, 16 Oct 2026 13:38:53 GMT",
       "last_notified_at": "2026-10-16T19:10:30.232195+00:00",
       "last_seen_at": "2026-10-16T19:10:30.232195+00:00"
+    },
+    {
+      "titles": [
+        "スパイスカレとちょい呑みよりんとこ(/洋食)＜ネット予約可"
+      ],
+      "sources": [
+        "ホットペッパーグルメ"
+      ],
+      "batch_open_count": 1,
+      "batch_ref_pub_date": "Fri, 16 Oct 2026 21:11:43 GMT",
+      "last_notified_at": "2026-10-17T07:10:32.380793+00:00",
+      "last_seen_at": "2026-10-17T07:10:32.380793+00:00"
     }
   ]
 }
