@@ -81,6 +81,18 @@
       "batch_ref_pub_date": "Sun, 18 Oct 2026 08:50:00 GMT",
       "last_notified_at": "2026-10-18T11:10:32.591505+00:00",
       "last_seen_at": "2026-10-18T11:10:32.591505+00:00"
+    },
+    {
+      "titles": [
+        "台風30号は台湾方面へ進む見込み地方は20日も急な強雨など注意9月並みに蒸し暑い予想"
+      ],
+      "sources": [
+        "日テレNEWS NNN"
+      ],
+      "batch_open_count": 1,
+      "batch_ref_pub_date": "Mon, 19 Oct 2026 10:23:00 GMT",
+      "last_notified_at": "2026-10-19T14:10:36.090597+00:00",
+      "last_seen_at": "2026-10-19T14:10:36.090597+00:00"
     }
   ]
 }
