@@ -30,7 +30,7 @@
       "batch_open_count": 16,
       "batch_ref_pub_date": "Fri, 23 Oct 2026 09:25:00 GMT",
       "last_notified_at": "2026-10-23T10:10:36.936724+00:00",
-      "last_seen_at": "2026-10-23T10:10:36.936724+00:00"
+      "last_seen_at": "2026-10-23T14:10:40.182921+00:00"
     },
     {
       "titles": [
@@ -222,7 +222,7 @@
       "batch_open_count": 1,
       "batch_ref_pub_date": "Thu, 22 Oct 2026 11:05:00 GMT",
       "last_notified_at": "2026-10-22T14:10:37.514956+00:00",
-      "last_seen_at": "2026-10-22T17:10:40.493567+00:00"
+      "last_seen_at": "2026-10-23T14:10:40.182921+00:00"
     },
     {
       "titles": [
@@ -259,6 +259,18 @@
       "batch_ref_pub_date": "Fri, 23 Oct 2026 11:07:31 GMT",
       "last_notified_at": "2026-10-23T12:10:39.722303+00:00",
       "last_seen_at": "2026-10-23T12:10:39.722303+00:00"
+    },
+    {
+      "titles": [
+        "24日（土）は午前を中心に本降りの雨午後は小康状態に週明けにかけ大雨に十分注意"
+      ],
+      "sources": [
+        "TBS NEWS DIG"
+      ],
+      "batch_open_count": 1,
+      "batch_ref_pub_date": "Fri, 23 Oct 2026 10:57:34 GMT",
+      "last_notified_at": "2026-10-23T14:10:40.182921+00:00",
+      "last_seen_at": "2026-10-23T14:10:40.182921+00:00"
     }
   ]
 }
