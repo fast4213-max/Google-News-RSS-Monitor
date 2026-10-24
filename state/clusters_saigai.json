@@ -98,7 +98,7 @@
       "batch_open_count": 9,
       "batch_ref_pub_date": "Sat, 24 Oct 2026 08:12:18 GMT",
       "last_notified_at": "2026-10-24T09:10:37.074190+00:00",
-      "last_seen_at": "2026-10-24T09:10:37.074190+00:00"
+      "last_seen_at": "2026-10-24T11:10:37.468450+00:00"
     },
     {
       "titles": [
@@ -261,6 +261,18 @@
       "batch_ref_pub_date": "Fri, 23 Oct 2026 10:57:34 GMT",
       "last_notified_at": "2026-10-23T14:10:40.182921+00:00",
       "last_seen_at": "2026-10-24T00:10:35.076197+00:00"
+    },
+    {
+      "titles": [
+        "秋季大会2日連続で中止に悪天候予想で26日に順延へ"
+      ],
+      "sources": [
+        "京都新聞デジタル"
+      ],
+      "batch_open_count": 1,
+      "batch_ref_pub_date": "Sat, 24 Oct 2026 10:30:00 GMT",
+      "last_notified_at": "2026-10-24T11:10:37.468450+00:00",
+      "last_seen_at": "2026-10-24T11:10:37.468450+00:00"
     }
   ]
 }
