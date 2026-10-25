@@ -100,7 +100,7 @@
       "batch_open_count": 2,
       "batch_ref_pub_date": "Sun, 25 Oct 2026 08:55:50 GMT",
       "last_notified_at": "2026-10-25T11:10:34.380722+00:00",
-      "last_seen_at": "2026-10-25T11:10:34.380722+00:00"
+      "last_seen_at": "2026-10-25T15:10:35.249015+00:00"
     },
     {
       "titles": [
@@ -363,6 +363,18 @@
       "batch_ref_pub_date": "Sun, 25 Oct 2026 13:27:19 GMT",
       "last_notified_at": "2026-10-25T14:10:32.216331+00:00",
       "last_seen_at": "2026-10-25T14:10:32.216331+00:00"
+    },
+    {
+      "titles": [
+        "マグニチュド86の地震を想定北野病院で約250人が災害対応訓練消防や市の職員も参加連携を確認市（テレビ）"
+      ],
+      "sources": [
+        "Yahoo!ニュース"
+      ],
+      "batch_open_count": 1,
+      "batch_ref_pub_date": "Sun, 25 Oct 2026 09:13:01 GMT",
+      "last_notified_at": "2026-10-25T15:10:35.249015+00:00",
+      "last_seen_at": "2026-10-25T15:10:35.249015+00:00"
     }
   ]
 }
