@@ -375,6 +375,18 @@
       "batch_ref_pub_date": "Sun, 25 Oct 2026 09:13:01 GMT",
       "last_notified_at": "2026-10-25T15:10:35.249015+00:00",
       "last_seen_at": "2026-10-25T15:10:35.249015+00:00"
+    },
+    {
+      "titles": [
+        "元台風30号が西日本へ今日26日は関東～九州で激しい雨夕方から夜に雨ピクも(気象予報士中川裕美子)"
+      ],
+      "sources": [
+        "tenki.jp"
+      ],
+      "batch_open_count": 1,
+      "batch_ref_pub_date": "Sun, 25 Oct 2026 21:37:01 GMT",
+      "last_notified_at": "2026-10-26T02:10:33.473567+00:00",
+      "last_seen_at": "2026-10-26T02:10:33.473567+00:00"
     }
   ]
 }
