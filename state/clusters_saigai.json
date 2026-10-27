@@ -433,6 +433,18 @@
       "batch_ref_pub_date": "Tue, 27 Oct 2026 12:49:13 GMT",
       "last_notified_at": "2026-10-27T14:10:34.469806+00:00",
       "last_seen_at": "2026-10-27T14:10:34.469806+00:00"
+    },
+    {
+      "titles": [
+        "大都市直下地震東京名古屋を激震が襲うＮｅｗｔｏｎ×朝日新聞"
+      ],
+      "sources": [
+        "朝日新聞"
+      ],
+      "batch_open_count": 1,
+      "batch_ref_pub_date": "Tue, 27 Oct 2026 20:00:00 GMT",
+      "last_notified_at": "2026-10-27T21:10:41.935886+00:00",
+      "last_seen_at": "2026-10-27T21:10:41.935886+00:00"
     }
   ]
 }
