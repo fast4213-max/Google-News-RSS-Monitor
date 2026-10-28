@@ -146,15 +146,29 @@
     },
     {
       "titles": [
+        "大阪で11月21日開催ホルの舞台上で学ぶ特別な90分",
         "大阪で11月21日開催ホルの舞台上で学ぶ特別な90分"
       ],
       "sources": [
-        "PR TIMES"
+        "PR TIMES",
+        "時事ドットコム"
+      ],
+      "batch_open_count": 2,
+      "batch_ref_pub_date": "Wed, 28 Oct 2026 05:46:00 GMT",
+      "last_notified_at": "2026-10-28T07:10:34.169797+00:00",
+      "last_seen_at": "2026-10-28T07:10:34.169797+00:00"
+    },
+    {
+      "titles": [
+        "成田紗弥が指導で舞台上バレエWS開催"
+      ],
+      "sources": [
+        "Koubo"
       ],
       "batch_open_count": 1,
-      "batch_ref_pub_date": "Wed, 28 Oct 2026 03:56:57 GMT",
-      "last_notified_at": "2026-10-28T04:10:38.476308+00:00",
-      "last_seen_at": "2026-10-28T04:10:38.476308+00:00"
+      "batch_ref_pub_date": "Wed, 28 Oct 2026 06:06:06 GMT",
+      "last_notified_at": "2026-10-28T07:10:34.169797+00:00",
+      "last_seen_at": "2026-10-28T07:10:34.169797+00:00"
     }
   ]
 }
