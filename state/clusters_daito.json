@@ -144,7 +144,7 @@
       "batch_open_count": 2,
       "batch_ref_pub_date": "Wed, 28 Oct 2026 05:46:00 GMT",
       "last_notified_at": "2026-10-28T07:10:34.169797+00:00",
-      "last_seen_at": "2026-10-28T07:10:34.169797+00:00"
+      "last_seen_at": "2026-10-29T01:10:34.074301+00:00"
     },
     {
       "titles": [
@@ -169,6 +169,18 @@
       "batch_ref_pub_date": "Wed, 28 Oct 2026 22:06:51 GMT",
       "last_notified_at": "2026-10-29T00:10:34.576670+00:00",
       "last_seen_at": "2026-10-29T00:10:34.576670+00:00"
+    },
+    {
+      "titles": [
+        "お得な再生パソコン販売会を寝屋川市で開催＜会場限定の購入特典あり＞"
+      ],
+      "sources": [
+        "PR TIMES"
+      ],
+      "batch_open_count": 1,
+      "batch_ref_pub_date": "Thu, 29 Oct 2026 00:26:46 GMT",
+      "last_notified_at": "2026-10-29T01:10:34.074301+00:00",
+      "last_seen_at": "2026-10-29T01:10:34.074301+00:00"
     }
   ]
 }
