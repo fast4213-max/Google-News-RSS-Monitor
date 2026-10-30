@@ -212,15 +212,17 @@
     },
     {
       "titles": [
-        "市に発表0930時点（TBSNEWSDIGPoweredbyJNN）"
+        "市に発表0930時点（TBSNEWSDIGPoweredbyJNN）",
+        "市に発表1724時点（TBSNEWSDIGPoweredbyJNN）"
       ],
       "sources": [
+        "Yahoo!ニュース",
         "Yahoo!ニュース"
       ],
-      "batch_open_count": 1,
-      "batch_ref_pub_date": "Sun, 25 Oct 2026 00:32:13 GMT",
-      "last_notified_at": "2026-10-25T01:10:38.914270+00:00",
-      "last_seen_at": "2026-10-25T04:10:42.082507+00:00"
+      "batch_open_count": 2,
+      "batch_ref_pub_date": "Fri, 30 Oct 2026 08:27:17 GMT",
+      "last_notified_at": "2026-10-30T09:10:33.518439+00:00",
+      "last_seen_at": "2026-10-30T09:10:33.518439+00:00"
     },
     {
       "titles": [
@@ -421,6 +423,18 @@
       "batch_ref_pub_date": "Tue, 27 Oct 2026 20:00:00 GMT",
       "last_notified_at": "2026-10-27T21:10:41.935886+00:00",
       "last_seen_at": "2026-10-27T21:10:41.935886+00:00"
+    },
+    {
+      "titles": [
+        "市に発表1724時点"
+      ],
+      "sources": [
+        "Excite エキサイト"
+      ],
+      "batch_open_count": 1,
+      "batch_ref_pub_date": "Fri, 30 Oct 2026 08:31:00 GMT",
+      "last_notified_at": "2026-10-30T09:10:33.518439+00:00",
+      "last_seen_at": "2026-10-30T09:10:33.518439+00:00"
     }
   ]
 }
