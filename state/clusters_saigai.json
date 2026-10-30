@@ -406,15 +406,17 @@
     },
     {
       "titles": [
+        "市に発表1724時点",
         "市に発表1724時点"
       ],
       "sources": [
-        "Excite エキサイト"
+        "Excite エキサイト",
+        "TBS NEWS DIG"
       ],
-      "batch_open_count": 1,
+      "batch_open_count": 2,
       "batch_ref_pub_date": "Fri, 30 Oct 2026 08:31:00 GMT",
-      "last_notified_at": "2026-10-30T09:10:33.518439+00:00",
-      "last_seen_at": "2026-10-30T09:10:33.518439+00:00"
+      "last_notified_at": "2026-10-30T11:10:36.889256+00:00",
+      "last_seen_at": "2026-10-30T11:10:36.889256+00:00"
     }
   ]
 }
