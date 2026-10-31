@@ -211,6 +211,18 @@
       "batch_ref_pub_date": "Sat, 31 Oct 2026 00:40:58 GMT",
       "last_notified_at": "2026-10-31T01:10:32.920820+00:00",
       "last_seen_at": "2026-10-31T01:10:32.920820+00:00"
+    },
+    {
+      "titles": [
+        "一棟マンション"
+      ],
+      "sources": [
+        "www.rakumachi.jp"
+      ],
+      "batch_open_count": 1,
+      "batch_ref_pub_date": "Sat, 31 Oct 2026 12:27:05 GMT",
+      "last_notified_at": "2026-10-31T14:10:32.077271+00:00",
+      "last_seen_at": "2026-10-31T14:10:32.077271+00:00"
     }
   ]
 }
