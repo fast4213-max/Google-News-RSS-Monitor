@@ -43,28 +43,18 @@
     {
       "titles": [
         "21日（水）は日本海側で大雨のおそれ関東以西は時季外れの暑さ名古屋は30℃予想（ウェザマップ）",
-        "26日（月）は再び雨のピクに大雨のおそれ雨傘の手放せない1日"
+        "26日（月）は再び雨のピクに大雨のおそれ雨傘の手放せない1日",
+        "小笠原諸島に接近のおそれ台風から離れた～東北でも大雨か（ウェザマップ）"
       ],
       "sources": [
         "Yahoo!ニュース",
-        "TBS NEWS DIG"
+        "TBS NEWS DIG",
+        "Yahoo!ニュース"
       ],
-      "batch_open_count": 2,
-      "batch_ref_pub_date": "Sun, 25 Oct 2026 08:55:50 GMT",
-      "last_notified_at": "2026-10-25T11:10:34.380722+00:00",
-      "last_seen_at": "2026-10-25T15:10:35.249015+00:00"
-    },
-    {
-      "titles": [
-        "台風30号が先島諸島へ接近で最も遅い真夏日"
-      ],
-      "sources": [
-        "SmartNews"
-      ],
-      "batch_open_count": 1,
-      "batch_ref_pub_date": "Wed, 21 Oct 2026 03:55:00 GMT",
-      "last_notified_at": "2026-10-21T06:10:39.656473+00:00",
-      "last_seen_at": "2026-10-24T05:10:30.283336+00:00"
+      "batch_open_count": 3,
+      "batch_ref_pub_date": "Sat, 31 Oct 2026 04:29:34 GMT",
+      "last_notified_at": "2026-10-31T05:10:32.055355+00:00",
+      "last_seen_at": "2026-10-31T05:10:32.055355+00:00"
     },
     {
       "titles": [
