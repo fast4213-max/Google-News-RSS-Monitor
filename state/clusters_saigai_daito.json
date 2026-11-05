@@ -1,3 +1,16 @@
 {
-  "clusters": []
+  "clusters": [
+    {
+      "titles": [
+        "三重県沖でM6･1の地震近畿地方は揺れずに東北地方で震度3過去に同じ現象そのメカニズムは"
+      ],
+      "sources": [
+        "京都新聞デジタル"
+      ],
+      "batch_open_count": 1,
+      "batch_ref_pub_date": "Tue, 03 Nov 2026 20:00:00 GMT",
+      "last_notified_at": "2026-11-05T06:10:30.859346+00:00",
+      "last_seen_at": "2026-11-05T06:10:30.859346+00:00"
+    }
+  ]
 }
