@@ -103,6 +103,30 @@
       "batch_ref_pub_date": "Fri, 06 Nov 2026 10:09:19 GMT",
       "last_notified_at": "2026-11-06T11:10:31.098452+00:00",
       "last_seen_at": "2026-11-06T11:10:31.098452+00:00"
+    },
+    {
+      "titles": [
+        "和歌山県で最大震度2の地震岬町和歌山県和歌山市（TBSNEWSDIGPoweredbyJNN）"
+      ],
+      "sources": [
+        "Yahoo!ニュース"
+      ],
+      "batch_open_count": 1,
+      "batch_ref_pub_date": "Fri, 06 Nov 2026 18:09:20 GMT",
+      "last_notified_at": "2026-11-06T18:10:31.378296+00:00",
+      "last_seen_at": "2026-11-06T18:10:31.378296+00:00"
+    },
+    {
+      "titles": [
+        "で最大震度2の地震岬町和歌山県和歌山市（FNNプライムオンライン（フジテレビ系））"
+      ],
+      "sources": [
+        "Yahoo!ニュース"
+      ],
+      "batch_open_count": 1,
+      "batch_ref_pub_date": "Fri, 06 Nov 2026 18:07:01 GMT",
+      "last_notified_at": "2026-11-06T18:10:31.378296+00:00",
+      "last_seen_at": "2026-11-06T18:10:31.378296+00:00"
     }
   ]
 }
