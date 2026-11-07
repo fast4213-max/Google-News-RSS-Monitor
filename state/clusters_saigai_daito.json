@@ -11,6 +11,42 @@
       "batch_ref_pub_date": "Tue, 03 Nov 2026 20:00:00 GMT",
       "last_notified_at": "2026-11-05T06:10:30.859346+00:00",
       "last_seen_at": "2026-11-05T06:10:30.859346+00:00"
+    },
+    {
+      "titles": [
+        "愛知県で最大震度5強の強い地震愛知知多市"
+      ],
+      "sources": [
+        "Infoseek"
+      ],
+      "batch_open_count": 1,
+      "batch_ref_pub_date": "Sat, 07 Nov 2026 16:21:00 GMT",
+      "last_notified_at": "2026-11-07T17:10:35.722665+00:00",
+      "last_seen_at": "2026-11-07T17:10:35.722665+00:00"
+    },
+    {
+      "titles": [
+        "最大震度5強や関西でも揺れ午前1時すぎの地震震源は静岡県西部"
+      ],
+      "sources": [
+        "Infoseek"
+      ],
+      "batch_open_count": 1,
+      "batch_ref_pub_date": "Sat, 07 Nov 2026 16:25:32 GMT",
+      "last_notified_at": "2026-11-07T17:10:35.722665+00:00",
+      "last_seen_at": "2026-11-07T17:10:35.722665+00:00"
+    },
+    {
+      "titles": [
+        "地震情報（2026年11月8日01時08分発表）"
+      ],
+      "sources": [
+        "産経ニュース"
+      ],
+      "batch_open_count": 1,
+      "batch_ref_pub_date": "Sat, 07 Nov 2026 16:08:00 GMT",
+      "last_notified_at": "2026-11-07T17:10:35.722665+00:00",
+      "last_seen_at": "2026-11-07T17:10:35.722665+00:00"
     }
   ]
 }
